@@ -1,3 +1,7 @@
+import java.io.FileWriter;
+import java.io.IOException;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.Scanner;
 
 public class Salary {
@@ -7,6 +11,9 @@ public class Salary {
     static final int NIGHT_END = (24 + 5) * 60;  // 翌5:00 = 1740分
     // 1日の法定労働時間（これを超えたら残業）
     static final int LEGAL_MINUTES = 8 * 60;      // 8時間 = 480分
+
+        // 勤務記録を保存するファイル
+    static final String RECORD_FILE = "records.csv";
 
     // "18:30" のような時刻を、0時からの「分」に変換する
     static int toMinutes(String time) {
@@ -97,8 +104,18 @@ public class Salary {
         return total;
     }
 
-    public static void main(String[] args) {
-        Scanner sc = new Scanner(System.in);
+       // 勤務を1日分入力して、給料を表示し、ファイルに保存する
+    static void recordWork(Scanner sc) {
+        // 日付は「2026-10-27」の形で入力してもらう（間違っていたら聞き直す）
+        LocalDate date = null;
+        while (date == null) {
+            System.out.print("日付（例 2026-10-27）: ");
+            try {
+                date = LocalDate.parse(sc.next());
+            } catch (DateTimeParseException e) {
+                System.out.println("日付の形が正しくありません。2026-10-27 のように入力してください。");
+            }
+        }
 
         System.out.print("時給（円）: ");
         int wage = sc.nextInt();
@@ -114,6 +131,41 @@ public class Salary {
             breakStartText = sc.next();
         }
 
-        calculate(wage, startText, endText, breakMinutes, breakStartText, true);
+        long total = calculate(wage, startText, endText, breakMinutes, breakStartText, true);
+
+        // CSV形式（カンマ区切り）で1行追記する
+        String line = date + "," + wage + "," + startText + "," + endText + ","
+                    + breakMinutes + "," + breakStartText + "," + total;
+        try (FileWriter writer = new FileWriter(RECORD_FILE, true)) {
+            writer.write(line + "\n");
+            System.out.println("記録しました！");
+        } catch (IOException e) {
+            System.out.println("保存に失敗しました: " + e.getMessage());
+        }
+    }
+
+    public static void main(String[] args) {
+        Scanner sc = new Scanner(System.in);
+
+        while (true) {
+            System.out.println();
+            System.out.println("==== 給料計算アプリ ====");
+            System.out.println("1: 勤務を記録する");
+            System.out.println("2: 月・年の合計を見る");
+            System.out.println("3: 終了");
+            System.out.print("番号を選んでください: ");
+            String choice = sc.next();
+
+            if (choice.equals("1")) {
+                recordWork(sc);
+            } else if (choice.equals("2")) {
+                System.out.println("（次のステップで作ります）");
+            } else if (choice.equals("3")) {
+                System.out.println("終了します。お疲れさまでした！");
+                break;
+            } else {
+                System.out.println("1〜3の番号を入力してください。");
+            }
+        }
     }
 }
