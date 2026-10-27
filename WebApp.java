@@ -34,7 +34,8 @@ public class WebApp {
           <style>
             html, body { overflow-x: hidden; }
             body { font-family: sans-serif; max-width: 460px; margin: 24px auto; padding: 0 16px; }
-            nav { display: flex; gap: 16px; align-items: center; margin-bottom: 8px; }
+            nav { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 8px; }
+            nav a, nav button { white-space: nowrap; }
             label { display: block; margin-top: 12px; }
             input, select { width: 100%%; max-width: 100%%; min-width: 0; padding: 8px; font-size: 16px; box-sizing: border-box; }
             /* iPhoneでは日付・時刻の入力欄が画面からはみ出すことがあるので、幅を固定する */
@@ -47,10 +48,11 @@ public class WebApp {
             .error { margin-top: 20px; color: #b4471f; }
             .warn { margin-top: 12px; padding: 12px; background: #fbe7dd; color: #8a2e10; border-radius: 8px; }
             table { width: 100%%; margin-top: 12px; border-collapse: collapse; }
-            th, td { padding: 8px; border-bottom: 1px solid #ccd; text-align: left; }
-            td.num, th.num { text-align: right; }
-            td.ops { white-space: nowrap; }
-            td.ops a { margin-left: 8px; }
+            th, td { padding: 8px 6px; border-bottom: 1px solid #ccd; text-align: left; }
+            td.num, th.num { text-align: right; white-space: nowrap; }
+            .nw { white-space: nowrap; }
+            td.ops { white-space: nowrap; text-align: right; }
+            td.ops a { display: block; padding: 4px 0; }
             .danger { background: #b4471f; color: #fff; border: none; border-radius: 4px; }
             .status { margin-top: 12px; padding: 16px; border: 2px solid #8aa; border-radius: 8px; font-size: 18px; }
             .punch button { padding: 20px; font-size: 18px; }
@@ -399,12 +401,13 @@ public class WebApp {
             sum += e.total();
             String ids = "line=" + e.index() + "&check=" + e.check();
             html.append("<tr><td>").append(e.date().getMonthValue()).append("/").append(e.date().getDayOfMonth())
-                .append("</td><td>").append(escape(e.start())).append("〜").append(escape(e.end()));
+                .append("</td><td><span class=\"nw\">").append(escape(e.start())).append("〜")
+                .append(escape(e.end())).append("</span>");
             if (e.breakMinutes() > 0) {
-                html.append("<br><small>休憩").append(e.breakMinutes()).append("分・時給")
-                    .append(e.wage()).append("円</small>");
+                html.append("<br><small><span class=\"nw\">休憩").append(e.breakMinutes()).append("分</span>・")
+                    .append("<span class=\"nw\">時給").append(e.wage()).append("円</span></small>");
             } else {
-                html.append("<br><small>時給").append(e.wage()).append("円</small>");
+                html.append("<br><small><span class=\"nw\">時給").append(e.wage()).append("円</span></small>");
             }
             html.append("</td><td class=\"num\">").append(String.format("%,d", e.total())).append("円</td>")
                 .append("<td class=\"ops\"><a href=\"/edit?").append(ids).append("\">修正</a>")
