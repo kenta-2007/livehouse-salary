@@ -5,7 +5,6 @@ public class Salary {
     // 深夜の時間帯（0時からの分）
     static final int NIGHT_START = 22 * 60;      // 22:00 = 1320分
     static final int NIGHT_END = (24 + 5) * 60;  // 翌5:00 = 1740分
-
     // 1日の法定労働時間（これを超えたら残業）
     static final int LEGAL_MINUTES = 8 * 60;      // 8時間 = 480分
 
@@ -34,6 +33,70 @@ public class Salary {
         return minutes / 60 + "時間" + String.format("%02d", minutes % 60) + "分";
     }
 
+    // 1日分の給料を計算する。show が true なら内訳も表示する
+    static long calculate(int wage, String startText, String endText,
+                          int breakMinutes, String breakStartText, boolean show) {
+        int start = toMinutes(startText);
+        int end = toMinutes(endText);
+
+        // 終了が開始より前なら、日付をまたいだとみなして24時間（1440分）足す
+        if (end < start) {
+            end += 1440;
+        }
+        int workMinutes = end - start;
+
+        // 休憩の時間帯（勤務の開始より前なら、次の日の時刻とみなす）
+        int breakStart = toMinutes(breakStartText);
+        if (breakStart < start) {
+            breakStart += 1440;
+        }
+        int breakEnd = breakStart + breakMinutes;
+
+        // 勤務全体・休憩のうち深夜帯にある時間
+        int nightAll = nightOverlap(start, end);
+        int nightBreak = nightOverlap(breakStart, breakEnd);
+
+        // 実際に働いた深夜時間と通常時間
+        int nightMinutes = nightAll - nightBreak;
+        int normalMinutes = (workMinutes - nightAll) - (breakMinutes - nightBreak);
+
+        // ---- 残業（1日8時間を超えた分）----
+        int overtimeStart = start + LEGAL_MINUTES;
+        if (breakMinutes > 0 && breakStart < overtimeStart) {
+            overtimeStart += breakMinutes;
+        }
+        int overtimeMinutes = 0;
+        int overtimeNightMinutes = 0;
+        if (overtimeStart < end) {
+            overtimeMinutes = end - overtimeStart;
+            overtimeNightMinutes = nightOverlap(overtimeStart, end);
+            if (breakMinutes > 0 && breakStart >= overtimeStart) {
+                overtimeMinutes -= breakMinutes;
+                overtimeNightMinutes -= nightBreak;
+            }
+        }
+        int overtimeNormalMinutes = overtimeMinutes - overtimeNightMinutes;
+
+        // ---- 4つの区分に分ける ----
+        int baseNormal = normalMinutes - overtimeNormalMinutes;  // 通常（1.00倍）
+        int baseNight = nightMinutes - overtimeNightMinutes;     // 深夜（1.25倍）
+
+        double pay1 = wage * 1.00 * baseNormal / 60.0;
+        double pay2 = wage * 1.25 * baseNight / 60.0;
+        double pay3 = wage * 1.25 * overtimeNormalMinutes / 60.0;
+        double pay4 = wage * 1.50 * overtimeNightMinutes / 60.0;
+        long total = Math.round(pay1 + pay2 + pay3 + pay4);
+
+        if (show) {
+            System.out.println("通常    : " + format(baseNormal) + " → " + Math.round(pay1) + "円");
+            System.out.println("深夜    : " + format(baseNight) + " → " + Math.round(pay2) + "円");
+            System.out.println("残業    : " + format(overtimeNormalMinutes) + " → " + Math.round(pay3) + "円");
+            System.out.println("深夜残業: " + format(overtimeNightMinutes) + " → " + Math.round(pay4) + "円");
+            System.out.println("合計    : " + total + "円");
+        }
+        return total;
+    }
+
     public static void main(String[] args) {
         Scanner sc = new Scanner(System.in);
 
@@ -51,68 +114,6 @@ public class Salary {
             breakStartText = sc.next();
         }
 
-        int start = toMinutes(startText);
-        int end = toMinutes(endText);
-
-        // 終了が開始より前なら、日付をまたいだとみなして24時間（1440分）足す
-        if (end < start) {
-            end += 1440;
-        }
-
-        int workMinutes = end - start;
-
-        // 休憩の時間帯（勤務の開始より前なら、次の日の時刻とみなす）
-        int breakStart = toMinutes(breakStartText);
-        if (breakStart < start) {
-            breakStart += 1440;
-        }
-        int breakEnd = breakStart + breakMinutes;
-
-        // 勤務全体のうち深夜帯にある時間
-        int nightAll = nightOverlap(start, end);
-        // 休憩のうち深夜帯にある時間
-        int nightBreak = nightOverlap(breakStart, breakEnd);
-
-        // 実際に働いた深夜時間と通常時間
-        int nightMinutes = nightAll - nightBreak;
-        int normalMinutes = (workMinutes - nightAll) - (breakMinutes - nightBreak);
-
-        // ---- 残業（1日8時間を超えた分）----
-        // 残業が始まる時刻：8時間働いた瞬間（その前に休憩があれば、休憩の分だけ後ろにずれる）
-        int overtimeStart = start + LEGAL_MINUTES;
-        if (breakMinutes > 0 && breakStart < overtimeStart) {
-            overtimeStart += breakMinutes;
-        }
-
-        int overtimeMinutes = 0;
-        int overtimeNightMinutes = 0;
-        if (overtimeStart < end) {
-            overtimeMinutes = end - overtimeStart;
-            overtimeNightMinutes = nightOverlap(overtimeStart, end);
-            // 残業の時間帯の中で休憩を取った場合は、その分を引く
-            if (breakMinutes > 0 && breakStart >= overtimeStart) {
-                overtimeMinutes -= breakMinutes;
-                overtimeNightMinutes -= nightBreak;
-            }
-        }
-        int overtimeNormalMinutes = overtimeMinutes - overtimeNightMinutes;
-
-        // ---- 4つの区分に分ける ----
-        int baseNormal = normalMinutes - overtimeNormalMinutes;  // 通常（1.00倍）
-        int baseNight = nightMinutes - overtimeNightMinutes;     // 深夜（1.25倍）
-        // 残業（1.25倍）= overtimeNormalMinutes、深夜残業（1.50倍）= overtimeNightMinutes
-
-        // 給料（1分あたりの金額 × 分）
-        double pay1 = wage * 1.00 * baseNormal / 60.0;
-        double pay2 = wage * 1.25 * baseNight / 60.0;
-        double pay3 = wage * 1.25 * overtimeNormalMinutes / 60.0;
-        double pay4 = wage * 1.50 * overtimeNightMinutes / 60.0;
-        long total = Math.round(pay1 + pay2 + pay3 + pay4);
-
-        System.out.println("通常    : " + format(baseNormal) + " → " + Math.round(pay1) + "円");
-        System.out.println("深夜    : " + format(baseNight) + " → " + Math.round(pay2) + "円");
-        System.out.println("残業    : " + format(overtimeNormalMinutes) + " → " + Math.round(pay3) + "円");
-        System.out.println("深夜残業: " + format(overtimeNightMinutes) + " → " + Math.round(pay4) + "円");
-        System.out.println("合計    : " + total + "円");
+        calculate(wage, startText, endText, breakMinutes, breakStartText, true);
     }
 }
