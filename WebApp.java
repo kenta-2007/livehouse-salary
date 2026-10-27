@@ -171,17 +171,17 @@ public class WebApp {
         }
     }
 
-    // 「/logout」：セッションIDを消して、ログイン画面に戻す
+       // 「/logout」：セッションIDを消して、ログイン画面に戻す
     static void handleLogout(HttpExchange exchange) throws IOException {
         if (exchange.getRequestMethod().equals("POST")) {
             String token = sessionToken(exchange);
             if (token != null) {
                 SESSIONS.remove(token);
             }
-                exchange.getResponseHeaders().add("Set-Cookie", "session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
+            exchange.getResponseHeaders().add("Set-Cookie", "session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
+        }
         redirect(exchange, "/login");
     }
-
     // 別のページへ移動させる
     static void redirect(HttpExchange exchange, String location) throws IOException {
         exchange.getResponseHeaders().set("Location", location);
