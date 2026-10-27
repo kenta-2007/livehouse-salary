@@ -1,15 +1,25 @@
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class WebApp {
+
+    // ログイン中の人の「合言葉（セッションID）」と、その有効期限
+    static final Map<String, Instant> SESSIONS = new ConcurrentHashMap<>();
+    static final long SESSION_SECONDS = 7 * 24 * 60 * 60;  // 7日間
+    static final SecureRandom RANDOM = new SecureRandom();
 
     // すべてのページで共通の枠（%s のところに各ページの中身が入る）
     static final String LAYOUT = """
@@ -21,7 +31,7 @@ public class WebApp {
           <title>給料計算</title>
           <style>
             body { font-family: sans-serif; max-width: 460px; margin: 24px auto; padding: 0 16px; }
-            nav { display: flex; gap: 16px; margin-bottom: 8px; }
+            nav { display: flex; gap: 16px; align-items: center; margin-bottom: 8px; }
             label { display: block; margin-top: 12px; }
             input { width: 100%%; padding: 8px; font-size: 16px; box-sizing: border-box; }
             .buttons { display: flex; gap: 8px; margin-top: 16px; }
@@ -34,10 +44,12 @@ public class WebApp {
             td.num, th.num { text-align: right; }
             .status { margin-top: 12px; padding: 16px; border: 2px solid #8aa; border-radius: 8px; font-size: 18px; }
             .punch button { padding: 20px; font-size: 18px; }
+            button.link { padding: 0; font-size: 14px; background: none; border: none; color: #06c; text-decoration: underline; cursor: pointer; }
           </style>
         </head>
         <body>
-          <nav><a href="/punch">タイムカード</a><a href="/">計算・記録</a><a href="/summary">集計</a></nav>
+          <nav><a href="/punch">タイムカード</a><a href="/">計算・記録</a><a href="/summary">集計</a>
+            <form action="/logout" method="post" style="margin-left:auto"><button class="link">ログアウト</button></form></nav>
           %s
         </body>
         </html>
@@ -63,13 +75,124 @@ public class WebApp {
 
     public static void main(String[] args) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
-        server.createContext("/", WebApp::handleCalc);
-        server.createContext("/record", WebApp::handleRecord);
-        server.createContext("/summary", WebApp::handleSummary);
-        server.createContext("/punch", WebApp::handlePunch);
+        // ログインとログアウトは、ログインしていなくても開ける
+        server.createContext("/login", WebApp::handleLogin);
+        server.createContext("/logout", WebApp::handleLogout);
+        // それ以外のページは、ログインしている人だけが開ける
+        server.createContext("/", loginRequired(WebApp::handleCalc));
+        server.createContext("/record", loginRequired(WebApp::handleRecord));
+        server.createContext("/summary", loginRequired(WebApp::handleSummary));
+        server.createContext("/punch", loginRequired(WebApp::handlePunch));
         server.start();
         System.out.println("サーバーを起動しました: http://localhost:8080");
     }
+
+    // ---- ログイン関係 ----
+
+    // ログインしているか確認してから、本来の処理を行う「門番」を作る
+    static HttpHandler loginRequired(HttpHandler handler) {
+        return exchange -> {
+            if (isLoggedIn(exchange)) {
+                handler.handle(exchange);
+            } else {
+                redirect(exchange, "/login");
+            }
+        };
+    }
+
+    // ブラウザから送られてきたクッキーの中に、有効なセッションIDがあるか
+    static boolean isLoggedIn(HttpExchange exchange) {
+        String token = sessionToken(exchange);
+        if (token == null) {
+            return false;
+        }
+        Instant expires = SESSIONS.get(token);
+        if (expires == null || expires.isBefore(Instant.now())) {
+            SESSIONS.remove(token);  // 期限切れなら消す
+            return false;
+        }
+        return true;
+    }
+
+    // 「Cookie: a=1; session=xxxx」から session の値を取り出す
+    static String sessionToken(HttpExchange exchange) {
+        String cookies = exchange.getRequestHeaders().getFirst("Cookie");
+        if (cookies == null) {
+            return null;
+        }
+        for (String cookie : cookies.split(";")) {
+            String[] kv = cookie.trim().split("=", 2);
+            if (kv.length == 2 && kv[0].equals("session")) {
+                return kv[1];
+            }
+        }
+        return null;
+    }
+
+    // ログインページのHTML（%s のところにメッセージが入る）
+    static final String LOGIN_PAGE = """
+        <h1>ログイン</h1>
+        %s
+        <form action="/login" method="post">
+          <label>パスワード<input type="password" name="password" required autofocus></label>
+          <div class="buttons"><button type="submit">ログイン</button></div>
+        </form>
+        """;
+
+    // 「/login」：GETならログイン画面を表示、POSTならパスワードを確認する
+    static void handleLogin(HttpExchange exchange) throws IOException {
+        if (!Auth.hasPassword()) {
+            sendPage(exchange, "<h1>ログイン</h1><p class=\"error\">パスワードがまだ設定されていません。"
+                    + "ターミナルで <code>java -cp out Auth</code> を実行して設定してください。</p>");
+            return;
+        }
+        if (!exchange.getRequestMethod().equals("POST")) {
+            sendPage(exchange, String.format(LOGIN_PAGE, ""));
+            return;
+        }
+
+        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        String password = parseQuery(body).getOrDefault("password", "");
+        if (Auth.checkPassword(password)) {
+            // 推測できないランダムなセッションIDを作って、ブラウザに渡す
+            byte[] bytes = new byte[32];
+            RANDOM.nextBytes(bytes);
+            String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+            SESSIONS.put(token, Instant.now().plusSeconds(SESSION_SECONDS));
+            exchange.getResponseHeaders().add("Set-Cookie", "session=" + token
+                    + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" + SESSION_SECONDS);
+            redirect(exchange, "/punch");
+        } else {
+            // 間違えたら1秒待たせる（パスワードを大量に試す攻撃を遅くする）
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            sendPage(exchange, String.format(LOGIN_PAGE, "<p class=\"error\">パスワードが違います。</p>"));
+        }
+    }
+
+    // 「/logout」：セッションIDを消して、ログイン画面に戻す
+    static void handleLogout(HttpExchange exchange) throws IOException {
+        if (exchange.getRequestMethod().equals("POST")) {
+            String token = sessionToken(exchange);
+            if (token != null) {
+                SESSIONS.remove(token);
+            }
+            exchange.getResponseHeaders().add("Set-Cookie", "session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+        }
+        redirect(exchange, "/login");
+    }
+
+    // 別のページへ移動させる
+    static void redirect(HttpExchange exchange, String location) throws IOException {
+        exchange.getResponseHeaders().set("Location", location);
+        exchange.sendResponseHeaders(303, -1);
+        exchange.close();
+    }
+
+    // ---- 各ページ ----
 
     // 「/」：フォームを表示し、送信されていたら計算結果も表示する
     static void handleCalc(HttpExchange exchange) throws IOException {
@@ -239,9 +362,18 @@ public class WebApp {
              + "</td><td class=\"num\">" + String.format("%,d", pay) + "円</td></tr>";
     }
 
-    // ページの中身を共通の枠に入れて、ブラウザに送る
+    // ページの中身を共通の枠（メニュー付き）に入れて、ブラウザに送る
     static void send(HttpExchange exchange, String content) throws IOException {
-        byte[] body = String.format(LAYOUT, content).getBytes(StandardCharsets.UTF_8);
+        sendHtml(exchange, String.format(LAYOUT, content));
+    }
+
+    // ログイン画面用（メニューなし）
+    static void sendPage(HttpExchange exchange, String content) throws IOException {
+        sendHtml(exchange, String.format(LAYOUT, content).replaceAll("(?s)<nav>.*?</nav>", ""));
+    }
+
+    static void sendHtml(HttpExchange exchange, String html) throws IOException {
+        byte[] body = html.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
         exchange.sendResponseHeaders(200, body.length);
         try (OutputStream out = exchange.getResponseBody()) {
