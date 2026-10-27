@@ -74,8 +74,7 @@ public class WebApp {
         """;
 
     public static void main(String[] args) throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
-        // ログインとログアウトは、ログインしていなくても開ける
+                HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 8080), 0);
         server.createContext("/login", WebApp::handleLogin);
         server.createContext("/logout", WebApp::handleLogout);
         // それ以外のページは、ログインしている人だけが開ける
