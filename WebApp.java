@@ -158,9 +158,8 @@ public class WebApp {
             RANDOM.nextBytes(bytes);
             String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
             SESSIONS.put(token, Instant.now().plusSeconds(SESSION_SECONDS));
-            exchange.getResponseHeaders().add("Set-Cookie", "session=" + token
-                    + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" + SESSION_SECONDS);
-            redirect(exchange, "/punch");
+                        exchange.getResponseHeaders().add("Set-Cookie", "session=" + token
+                    + "; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=" + SESSION_SECONDS);
         } else {
             // 間違えたら1秒待たせる（パスワードを大量に試す攻撃を遅くする）
             try {
@@ -179,8 +178,7 @@ public class WebApp {
             if (token != null) {
                 SESSIONS.remove(token);
             }
-            exchange.getResponseHeaders().add("Set-Cookie", "session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
-        }
+                exchange.getResponseHeaders().add("Set-Cookie", "session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
         redirect(exchange, "/login");
     }
 
