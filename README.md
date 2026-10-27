@@ -48,5 +48,18 @@ java -cp out WebApp
 - 自動テスト（JUnit）の追加
 - Webアプリ化
 
+## 公開構成
+- Google Cloud（Compute Engine e2-micro / Ubuntu 24.04）上で稼働
+- Caddy をリバースプロキシとして使用し、Let's Encrypt の証明書で HTTPS 化
+- systemd でサービス化し、サーバー再起動時も自動起動
+
+## セキュリティ対策
+- パスワードは PBKDF2（ソルト付き・21万回ストレッチング）でハッシュ化して保存
+- セッションIDは SecureRandom で生成し、HttpOnly / Secure / SameSite=Strict のクッキーで管理
+- データを書き換える操作は POST のみで受け付け
+- 出力時のエスケープによる XSS 対策
+- アプリは 127.0.0.1 でのみ待ち受け、外部からは HTTPS（Caddy）経由でのみアクセス可能
+- 給料の記録やパスワードのハッシュは .gitignore で公開リポジトリから除外
+
 ## 使用技術
 - Java 21
