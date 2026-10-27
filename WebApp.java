@@ -10,7 +10,9 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -42,6 +44,9 @@ public class WebApp {
             table { width: 100%%; margin-top: 12px; border-collapse: collapse; }
             th, td { padding: 8px; border-bottom: 1px solid #ccd; text-align: left; }
             td.num, th.num { text-align: right; }
+            td.ops { white-space: nowrap; }
+            td.ops a { margin-left: 8px; }
+            .danger { background: #b4471f; color: #fff; border: none; border-radius: 4px; }
             .status { margin-top: 12px; padding: 16px; border: 2px solid #8aa; border-radius: 8px; font-size: 18px; }
             .punch button { padding: 20px; font-size: 18px; }
             button.link { padding: 0; font-size: 14px; background: none; border: none; color: #06c; text-decoration: underline; cursor: pointer; }
@@ -96,6 +101,9 @@ public class WebApp {
         server.createContext("/record", loginRequired(WebApp::handleRecord));
         server.createContext("/summary", loginRequired(WebApp::handleSummary));
         server.createContext("/punch", loginRequired(WebApp::handlePunch));
+        server.createContext("/records", loginRequired(WebApp::handleRecords));
+        server.createContext("/edit", loginRequired(WebApp::handleEdit));
+        server.createContext("/delete", loginRequired(WebApp::handleDelete));
         server.start();
         System.out.println("サーバーを起動しました: http://localhost:8080");
     }
@@ -271,12 +279,14 @@ public class WebApp {
         html.append("<table><tr><th>月</th><th class=\"num\">勤務日数</th><th class=\"num\">合計</th></tr>");
         for (int m = 1; m <= 12; m++) {
             if (s.monthDays()[m] > 0) {
-                html.append("<tr><td>").append(m).append("月</td><td class=\"num\">")
+                html.append("<tr><td><a href=\"/records?year=").append(year).append("&month=").append(m)
+                    .append("\">").append(m).append("月</a></td><td class=\"num\">")
                     .append(s.monthDays()[m]).append("日</td><td class=\"num\">")
                     .append(String.format("%,d", s.monthTotal()[m])).append("円</td></tr>");
             }
         }
         html.append("</table>");
+        html.append("<p>月をタップすると、その月の記録の一覧が見られます。</p>");
 
         html.append("<div class=\"result\">年間合計 <strong>")
             .append(String.format("%,d", s.yearTotal())).append("円</strong></div>");
@@ -346,6 +356,182 @@ public class WebApp {
         }
         html.append("</form>");
         send(exchange, html.toString());
+    }
+
+    // ---- 記録の一覧・修正・削除 ----
+
+    // 「/records?year=2026&month=10」：その月の記録を一覧で表示する
+    static void handleRecords(HttpExchange exchange) throws IOException {
+        Map<String, String> params = parseQuery(exchange.getRequestURI().getRawQuery());
+        int year;
+        int month;
+        try {
+            year = Integer.parseInt(params.get("year"));
+            month = Integer.parseInt(params.get("month"));
+        } catch (RuntimeException e) {
+            redirect(exchange, "/summary");
+            return;
+        }
+        send(exchange, recordsHtml(year, month, ""));
+    }
+
+    // 月の記録一覧のHTMLを作る（message は上に出すお知らせ）
+    static String recordsHtml(int year, int month, String message) throws IOException {
+        StringBuilder html = new StringBuilder();
+        html.append("<h1>").append(year).append("年").append(month).append("月の記録</h1>");
+        html.append(message);
+        html.append("<table><tr><th>日付</th><th>勤務</th><th class=\"num\">給料</th><th></th></tr>");
+        int count = 0;
+        long sum = 0;
+        // 日付の順に並べて表示する（行番号はそのまま持っておく）
+        List<Salary.Entry> entries = Salary.loadEntries();
+        entries.sort(Comparator.comparing(Salary.Entry::date).thenComparing(Salary.Entry::start));
+        for (Salary.Entry e : entries) {
+            if (e.date().getYear() != year || e.date().getMonthValue() != month) {
+                continue;
+            }
+            count++;
+            sum += e.total();
+            String ids = "line=" + e.index() + "&check=" + e.check();
+            html.append("<tr><td>").append(e.date().getMonthValue()).append("/").append(e.date().getDayOfMonth())
+                .append("</td><td>").append(escape(e.start())).append("〜").append(escape(e.end()));
+            if (e.breakMinutes() > 0) {
+                html.append("<br><small>休憩").append(e.breakMinutes()).append("分・時給")
+                    .append(e.wage()).append("円</small>");
+            } else {
+                html.append("<br><small>時給").append(e.wage()).append("円</small>");
+            }
+            html.append("</td><td class=\"num\">").append(String.format("%,d", e.total())).append("円</td>")
+                .append("<td class=\"ops\"><a href=\"/edit?").append(ids).append("\">修正</a>")
+                .append("<a href=\"/delete?").append(ids).append("\">削除</a></td></tr>");
+        }
+        html.append("</table>");
+        if (count == 0) {
+            html.append("<p>この月の記録はありません。</p>");
+        } else {
+            html.append("<div class=\"result\">").append(count).append("日勤務・合計 <strong>")
+                .append(String.format("%,d", sum)).append("円</strong></div>");
+        }
+        html.append("<p><a href=\"/summary?year=").append(year).append("\">← 集計に戻る</a></p>");
+        return html.toString();
+    }
+
+    // 「/delete」：GETなら確認画面、POSTなら本当に削除する
+    static void handleDelete(HttpExchange exchange) throws IOException {
+        boolean isPost = exchange.getRequestMethod().equals("POST");
+        Map<String, String> params = isPost
+                ? parseQuery(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8))
+                : parseQuery(exchange.getRequestURI().getRawQuery());
+
+        Salary.Entry e = findEntry(params);
+        if (e == null) {
+            send(exchange, notFoundHtml());
+            return;
+        }
+        int year = e.date().getYear();
+        int month = e.date().getMonthValue();
+
+        if (!isPost) {
+            // 確認画面（ここではまだ削除しない）
+            send(exchange, "<h1>記録の削除</h1>"
+                    + "<p>次の記録を削除します。よろしいですか？</p>"
+                    + "<div class=\"status\">" + e.date() + "　" + escape(e.start()) + "〜" + escape(e.end())
+                    + "<br>" + String.format("%,d", e.total()) + "円</div>"
+                    + "<form action=\"/delete\" method=\"post\" class=\"buttons\">"
+                    + hidden(e)
+                    + "<button type=\"submit\" class=\"danger\">削除する</button></form>"
+                    + "<p><a href=\"/records?year=" + year + "&month=" + month + "\">やめる</a></p>");
+            return;
+        }
+
+        if (Salary.replaceLine(e.index(), e.check(), null)) {
+            send(exchange, recordsHtml(year, month, "<p class=\"result\">記録を削除しました。</p>"));
+        } else {
+            send(exchange, notFoundHtml());
+        }
+    }
+
+    // 修正フォーム（%s のところに入力欄の値などが入る）
+    static final String EDIT_FORM = """
+        <h1>記録の修正</h1>
+        %s
+        <form action="/edit" method="post">
+          %s
+          <label>日付<input type="date" name="date" value="%s" required></label>
+          <label>時給（円）<input type="number" name="wage" value="%s" required></label>
+          <label>開始時刻<input type="time" name="start" value="%s" required></label>
+          <label>終了時刻<input type="time" name="end" value="%s" required></label>
+          <label>休憩（分）<input type="number" name="break" value="%s" min="0"></label>
+          <label>休憩の開始時刻（休憩がある場合）<input type="time" name="breakStart" value="%s"></label>
+          <div class="buttons"><button type="submit">保存する</button></div>
+        </form>
+        <p><a href="/records?year=%s&month=%s">やめる</a></p>
+        """;
+
+    // 「/edit」：GETなら今の内容が入った修正フォーム、POSTなら計算し直して保存する
+    static void handleEdit(HttpExchange exchange) throws IOException {
+        boolean isPost = exchange.getRequestMethod().equals("POST");
+        Map<String, String> params = isPost
+                ? parseQuery(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8))
+                : parseQuery(exchange.getRequestURI().getRawQuery());
+
+        Salary.Entry e = findEntry(params);
+        if (e == null) {
+            send(exchange, notFoundHtml());
+            return;
+        }
+
+        if (!isPost) {
+            // 休憩がない記録は、休憩の開始時刻の欄を空にしておく
+            String breakStart = e.breakMinutes() > 0 ? e.breakStart() : "";
+            send(exchange, String.format(EDIT_FORM, "", hidden(e),
+                    e.date(), e.wage(), escape(e.start()), escape(e.end()), e.breakMinutes(), escape(breakStart),
+                    e.date().getYear(), e.date().getMonthValue()));
+            return;
+        }
+
+        try {
+            LocalDate date = LocalDate.parse(params.get("date"));
+            int wage = Integer.parseInt(params.get("wage"));
+            Salary.PayResult r = calc(params);
+            String newLine = Salary.toLine(date, wage, params.get("start"), params.get("end"),
+                    breakMinutes(params), breakStart(params), r.total());
+            if (Salary.replaceLine(e.index(), e.check(), newLine)) {
+                send(exchange, recordsHtml(date.getYear(), date.getMonthValue(),
+                        "<p class=\"result\">記録を修正しました（" + String.format("%,d", r.total()) + "円）。</p>"));
+            } else {
+                send(exchange, notFoundHtml());
+            }
+        } catch (RuntimeException ex) {
+            // 入力がおかしいときは、入力した内容のままフォームを出し直す
+            send(exchange, String.format(EDIT_FORM, "<p class=\"error\">入力内容を確認してください。</p>", hidden(e),
+                    escape(params.getOrDefault("date", "")), escape(params.getOrDefault("wage", "")),
+                    escape(params.getOrDefault("start", "")), escape(params.getOrDefault("end", "")),
+                    escape(params.getOrDefault("break", "0")), escape(params.getOrDefault("breakStart", "")),
+                    e.date().getYear(), e.date().getMonthValue()));
+        }
+    }
+
+    // フォームの line と check から、記録を探す（見つからなければ null）
+    static Salary.Entry findEntry(Map<String, String> params) throws IOException {
+        try {
+            return Salary.findEntry(Integer.parseInt(params.get("line")), params.getOrDefault("check", ""));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    // どの記録かを送るための、見えない入力欄
+    static String hidden(Salary.Entry e) {
+        return "<input type=\"hidden\" name=\"line\" value=\"" + e.index() + "\">"
+             + "<input type=\"hidden\" name=\"check\" value=\"" + e.check() + "\">";
+    }
+
+    static String notFoundHtml() {
+        return "<h1>記録が見つかりません</h1>"
+             + "<p class=\"error\">記録が見つからないか、ほかの画面で変更されています。"
+             + "もう一度、一覧から選び直してください。</p>"
+             + "<p><a href=\"/summary\">集計に戻る</a></p>";
     }
 
     // フォームの値から給料を計算する

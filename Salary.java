@@ -4,6 +4,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Scanner;
 import java.util.TreeSet;
 
@@ -171,14 +173,82 @@ public class Salary {
         }
     }
 
-    // 勤務1日分を、CSV形式（カンマ区切り）でファイルに1行追記する（コンソール版・Web版で共通）
+    // 勤務1日分を、CSVの1行の形（カンマ区切り）にする
+    static String toLine(LocalDate date, int wage, String startText, String endText,
+                         int breakMinutes, String breakStartText, long total) {
+        return date + "," + wage + "," + startText + "," + endText + ","
+             + breakMinutes + "," + breakStartText + "," + total;
+    }
+
+    // 勤務1日分を、CSV形式でファイルに1行追記する（コンソール版・Web版で共通）
     static void saveRecord(LocalDate date, int wage, String startText, String endText,
                            int breakMinutes, String breakStartText, long total) throws IOException {
-        String line = date + "," + wage + "," + startText + "," + endText + ","
-                    + breakMinutes + "," + breakStartText + "," + total;
+        String line = toLine(date, wage, startText, endText, breakMinutes, breakStartText, total);
         try (FileWriter writer = new FileWriter(RECORD_FILE, true)) {
             writer.write(line + "\n");
         }
+    }
+
+    // ---- 記録の一覧・修正・削除 ----
+
+    // 記録1件分の「入れ物」。index はファイルの何行目か（0から数える）、check は確認用の番号
+    record Entry(int index, String check, LocalDate date, int wage, String start, String end,
+                 int breakMinutes, String breakStart, long total) {
+    }
+
+    // 1行の中身から、確認用の番号を作る（中身が1文字でも違えば、ほぼ確実に別の番号になる）
+    static String checkOf(String line) {
+        return Integer.toHexString(line.hashCode());
+    }
+
+    // 記録をすべて読み込む（ファイルの行の順番のまま）
+    static List<Entry> loadEntries() throws IOException {
+        List<Entry> entries = new ArrayList<>();
+        Path path = Path.of(RECORD_FILE);
+        if (!Files.exists(path)) {
+            return entries;
+        }
+        List<String> lines = Files.readAllLines(path);
+        for (int i = 0; i < lines.size(); i++) {
+            String line = lines.get(i);
+            if (line.isBlank()) {
+                continue;
+            }
+            String[] c = line.split(",");
+            entries.add(new Entry(i, checkOf(line), LocalDate.parse(c[0]), Integer.parseInt(c[1]),
+                    c[2], c[3], Integer.parseInt(c[4]), c[5], Long.parseLong(c[6])));
+        }
+        return entries;
+    }
+
+    // index 行目の記録を1件取り出す。確認用の番号が合わなければ null
+    static Entry findEntry(int index, String check) throws IOException {
+        for (Entry e : loadEntries()) {
+            if (e.index() == index && e.check().equals(check)) {
+                return e;
+            }
+        }
+        return null;
+    }
+
+    // index 行目を newLine に置き換える（newLine が null なら削除）。
+    // 確認用の番号が合わないとき（その間に記録が変わったとき）は何もせず false を返す
+    static boolean replaceLine(int index, String check, String newLine) throws IOException {
+        Path path = Path.of(RECORD_FILE);
+        if (!Files.exists(path)) {
+            return false;
+        }
+        List<String> lines = new ArrayList<>(Files.readAllLines(path));
+        if (index < 0 || index >= lines.size() || !checkOf(lines.get(index)).equals(check)) {
+            return false;
+        }
+        if (newLine == null) {
+            lines.remove(index);
+        } else {
+            lines.set(index, newLine);
+        }
+        Files.write(path, lines);
+        return true;
     }
 
     // 最後に使った時給を読み込む（保存されていなければ初期値）
