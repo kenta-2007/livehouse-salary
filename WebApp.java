@@ -33,7 +33,7 @@ public class WebApp {
             body { font-family: sans-serif; max-width: 460px; margin: 24px auto; padding: 0 16px; }
             nav { display: flex; gap: 16px; align-items: center; margin-bottom: 8px; }
             label { display: block; margin-top: 12px; }
-            input { width: 100%%; padding: 8px; font-size: 16px; box-sizing: border-box; }
+            input, select { width: 100%%; padding: 8px; font-size: 16px; box-sizing: border-box; }
             .buttons { display: flex; gap: 8px; margin-top: 16px; }
             button { flex: 1; padding: 12px; font-size: 16px; }
             .result { margin-top: 20px; padding: 16px; background: #eef6f4; border-radius: 8px; font-size: 20px; }
@@ -55,16 +55,16 @@ public class WebApp {
         </html>
         """;
 
-    // 入力フォーム（%s のところに今日の日付と、計算結果が入る）
+    // 入力フォーム（%s のところに入力欄の初期値と、計算結果が入る）
     static final String FORM = """
-        <h1>ライブハウスバイト給料計算</h1>
+        <h1>給料計算</h1>
         <form action="/" method="get">
           <label>日付（記録するとき）<input type="date" name="date" value="%s"></label>
-          <label>時給（円）<input type="number" name="wage" value="1200" required></label>
-          <label>開始時刻<input type="time" name="start" required></label>
-          <label>終了時刻<input type="time" name="end" required></label>
-          <label>休憩（分）<input type="number" name="break" value="0" min="0"></label>
-          <label>休憩の開始時刻（休憩がある場合）<input type="time" name="breakStart"></label>
+          <label>時給（円）<input type="number" name="wage" value="%s" required></label>
+          <label>開始時刻<input type="time" name="start" value="%s" required></label>
+          <label>終了時刻<input type="time" name="end" value="%s" required></label>
+          <label>休憩（分）<input type="number" name="break" value="%s" min="0"></label>
+          <label>休憩の開始時刻（休憩がある場合）<input type="time" name="breakStart" value="%s"></label>
           <div class="buttons">
             <button type="submit">計算する</button>
             <button type="submit" formaction="/record" formmethod="post">記録する</button>
@@ -73,8 +73,22 @@ public class WebApp {
         %s
         """;
 
+    // フォームに、前回入力した値（なければ初期値）を入れてHTMLを作る
+    static String form(Map<String, String> params, String resultHtml) {
+        String wage = params.getOrDefault("wage", String.valueOf(Salary.loadWage()));
+        return String.format(FORM,
+                escape(params.getOrDefault("date", LocalDate.now().toString())),
+                escape(wage),
+                escape(params.getOrDefault("start", "")),
+                escape(params.getOrDefault("end", "")),
+                escape(params.getOrDefault("break", "0")),
+                escape(params.getOrDefault("breakStart", "")),
+                resultHtml);
+    }
+
     public static void main(String[] args) throws IOException {
-                HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 8080), 0);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 8080), 0);
+        // ログインとログアウトは、ログインしていなくても開ける
         server.createContext("/login", WebApp::handleLogin);
         server.createContext("/logout", WebApp::handleLogout);
         // それ以外のページは、ログインしている人だけが開ける
@@ -158,10 +172,10 @@ public class WebApp {
             RANDOM.nextBytes(bytes);
             String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
             SESSIONS.put(token, Instant.now().plusSeconds(SESSION_SECONDS));
-                        exchange.getResponseHeaders().add("Set-Cookie", "session=" + token
+            exchange.getResponseHeaders().add("Set-Cookie", "session=" + token
                     + "; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=" + SESSION_SECONDS);
-            redirect(exchange, "/punch");  
-                } else {
+            redirect(exchange, "/punch");
+        } else {
             // 間違えたら1秒待たせる（パスワードを大量に試す攻撃を遅くする）
             try {
                 Thread.sleep(1000);
@@ -172,7 +186,7 @@ public class WebApp {
         }
     }
 
-       // 「/logout」：セッションIDを消して、ログイン画面に戻す
+    // 「/logout」：セッションIDを消して、ログイン画面に戻す
     static void handleLogout(HttpExchange exchange) throws IOException {
         if (exchange.getRequestMethod().equals("POST")) {
             String token = sessionToken(exchange);
@@ -183,6 +197,7 @@ public class WebApp {
         }
         redirect(exchange, "/login");
     }
+
     // 別のページへ移動させる
     static void redirect(HttpExchange exchange, String location) throws IOException {
         exchange.getResponseHeaders().set("Location", location);
@@ -203,7 +218,7 @@ public class WebApp {
                 resultHtml = "<p class=\"error\">入力内容を確認してください。</p>";
             }
         }
-        send(exchange, String.format(FORM, LocalDate.now(), resultHtml));
+        send(exchange, form(params, resultHtml));
     }
 
     // 「/record」：計算して、ファイルに記録する（データを書き換えるので POST で受け取る）
@@ -219,13 +234,15 @@ public class WebApp {
         try {
             LocalDate date = LocalDate.parse(params.get("date"));
             Salary.PayResult r = calc(params);
-            Salary.saveRecord(date, Integer.parseInt(params.get("wage")), params.get("start"), params.get("end"),
+            int wage = Integer.parseInt(params.get("wage"));
+            Salary.saveRecord(date, wage, params.get("start"), params.get("end"),
                     breakMinutes(params), breakStart(params), r.total());
+            Salary.saveWage(wage);  // 次からの初期値にする
             resultHtml = "<p class=\"result\">" + date + " の勤務を記録しました！</p>" + resultHtml(params, r);
         } catch (RuntimeException e) {
             resultHtml = "<p class=\"error\">入力内容を確認してください（記録するときは日付も必要です）。</p>";
         }
-        send(exchange, String.format(FORM, LocalDate.now(), resultHtml));
+        send(exchange, form(params, resultHtml));
     }
 
     // 「/summary」：指定した年の月ごとの合計と、扶養ラインまでの残りを表示する
@@ -241,9 +258,15 @@ public class WebApp {
 
         StringBuilder html = new StringBuilder();
         html.append("<h1>").append(year).append("年の集計</h1>");
+        // 年は、記録がある年から選ぶ
         html.append("<form action=\"/summary\" method=\"get\" class=\"buttons\">")
-            .append("<input type=\"number\" name=\"year\" value=\"").append(year).append("\">")
-            .append("<button type=\"submit\">表示</button></form>");
+            .append("<select name=\"year\" onchange=\"this.form.submit()\">");
+        for (int y : Salary.recordYears().descendingSet()) {
+            html.append("<option value=\"").append(y).append("\"")
+                .append(y == year ? " selected" : "")
+                .append(">").append(y).append("年</option>");
+        }
+        html.append("</select><button type=\"submit\">表示</button></form>");
 
         html.append("<table><tr><th>月</th><th class=\"num\">勤務日数</th><th class=\"num\">合計</th></tr>");
         for (int m = 1; m <= 12; m++) {
@@ -302,7 +325,8 @@ public class WebApp {
         html.append("<form action=\"/punch\" method=\"post\" class=\"punch\">");
         if (p == null) {
             html.append("<div class=\"status\">今は勤務していません</div>")
-                .append("<label>時給（円）<input type=\"number\" name=\"wage\" value=\"1200\" required></label>")
+                .append("<label>時給（円）<input type=\"number\" name=\"wage\" value=\"")
+                .append(Salary.loadWage()).append("\" required></label>")
                 .append("<div class=\"buttons\"><button name=\"action\" value=\"in\">出勤</button></div>");
         } else if (p.onBreak()) {
             html.append("<div class=\"status\">休憩中（").append(p.breakStart()).append("〜）</div>")

@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Scanner;
+import java.util.TreeSet;
 
 public class Salary {
 
@@ -19,6 +20,11 @@ public class Salary {
 
     // 扶養ライン（年収の上限）。自分の家庭の条件に合わせて変えてください
     static final long FUYOU_LIMIT = 1_500_000;
+
+    // 最後に使った時給を保存するファイル
+    static final String WAGE_FILE = "wage.txt";
+    // 時給がまだ保存されていないときの初期値
+    static final int DEFAULT_WAGE = 1200;
 
     // "18:30" のような時刻を、0時からの「分」に変換する
     static int toMinutes(String time) {
@@ -173,6 +179,35 @@ public class Salary {
         try (FileWriter writer = new FileWriter(RECORD_FILE, true)) {
             writer.write(line + "\n");
         }
+    }
+
+    // 最後に使った時給を読み込む（保存されていなければ初期値）
+    static int loadWage() {
+        try {
+            return Integer.parseInt(Files.readString(Path.of(WAGE_FILE)).trim());
+        } catch (IOException | NumberFormatException e) {
+            return DEFAULT_WAGE;
+        }
+    }
+
+    // 時給を保存する（次からの初期値になる）
+    static void saveWage(int wage) throws IOException {
+        Files.writeString(Path.of(WAGE_FILE), String.valueOf(wage));
+    }
+
+    // 記録がある年の一覧（今年も必ず含める）を、古い順に返す
+    static TreeSet<Integer> recordYears() throws IOException {
+        TreeSet<Integer> years = new TreeSet<>();
+        years.add(LocalDate.now().getYear());
+        Path path = Path.of(RECORD_FILE);
+        if (Files.exists(path)) {
+            for (String line : Files.readAllLines(path)) {
+                if (!line.isBlank()) {
+                    years.add(LocalDate.parse(line.split(",")[0]).getYear());
+                }
+            }
+        }
+        return years;
     }
 
     // 1年分の集計結果をまとめて入れておく「入れ物」
