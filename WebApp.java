@@ -160,7 +160,8 @@ public class WebApp {
             SESSIONS.put(token, Instant.now().plusSeconds(SESSION_SECONDS));
                         exchange.getResponseHeaders().add("Set-Cookie", "session=" + token
                     + "; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=" + SESSION_SECONDS);
-        } else {
+            redirect(exchange, "/punch");  
+                } else {
             // 間違えたら1秒待たせる（パスワードを大量に試す攻撃を遅くする）
             try {
                 Thread.sleep(1000);
