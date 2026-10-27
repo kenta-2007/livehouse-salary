@@ -25,6 +25,9 @@ public class WebApp {
             button { margin-top: 16px; width: 100%%; padding: 12px; font-size: 16px; }
             .result { margin-top: 20px; padding: 16px; background: #eef6f4; border-radius: 8px; font-size: 20px; }
             .error { margin-top: 20px; color: #b4471f; }
+                        table { width: 100%%; margin-top: 12px; border-collapse: collapse; }
+            th, td { padding: 8px; border-bottom: 1px solid #ccd; text-align: left; }
+            td.num { text-align: right; }
           </style>
         </head>
         <body>
@@ -66,10 +69,18 @@ public class WebApp {
                     breakStart = "0:00";
                 }
 
-                long total = Salary.calculate(wage, start, end, breakMinutes, breakStart, false);
+                                Salary.PayResult r = Salary.calculateDetail(wage, start, end, breakMinutes, breakStart);
 
                 resultHtml = "<div class=\"result\">" + escape(start) + "〜" + escape(end)
-                           + " の給料は <strong>" + String.format("%,d", total) + "円</strong> です</div>";
+                           + " の給料は <strong>" + String.format("%,d", r.total()) + "円</strong> です</div>"
+                           + "<table>"
+                           + "<tr><th>区分</th><th>時間</th><th>金額</th></tr>"
+                           + row("通常", r.normalMinutes(), r.normalPay())
+                           + row("深夜（×1.25）", r.nightMinutes(), r.nightPay())
+                           + row("残業（×1.25）", r.overtimeMinutes(), r.overtimePay())
+                           + row("深夜残業（×1.50）", r.overtimeNightMinutes(), r.overtimeNightPay())
+                           + "</table>";
+
             } catch (RuntimeException e) {
                 resultHtml = "<p class=\"error\">入力内容を確認してください。</p>";
             }
@@ -98,6 +109,12 @@ public class WebApp {
         return params;
     }
 
+        // 内訳の表の1行分のHTMLを作る
+    static String row(String label, int minutes, long pay) {
+        return "<tr><td>" + label + "</td><td>" + Salary.format(minutes)
+             + "</td><td class=\"num\">" + String.format("%,d", pay) + "円</td></tr>";
+    }
+    
     // HTMLで特別な意味を持つ文字を無害な形に変える（XSS対策）
     static String escape(String text) {
         return text.replace("&", "&amp;")

@@ -46,9 +46,17 @@ public class Salary {
         return minutes / 60 + "時間" + String.format("%02d", minutes % 60) + "分";
     }
 
-    // 1日分の給料を計算する。show が true なら内訳も表示する
-    static long calculate(int wage, String startText, String endText,
-                          int breakMinutes, String breakStartText, boolean show) {
+       // 給料の内訳をまとめて入れておく「入れ物」
+    record PayResult(int normalMinutes, long normalPay,
+                     int nightMinutes, long nightPay,
+                     int overtimeMinutes, long overtimePay,
+                     int overtimeNightMinutes, long overtimeNightPay,
+                     long total) {
+    }
+
+    // 1日分の給料を計算して、内訳をまとめて返す
+    static PayResult calculateDetail(int wage, String startText, String endText,
+                                     int breakMinutes, String breakStartText) {
         int start = toMinutes(startText);
         int end = toMinutes(endText);
 
@@ -100,15 +108,27 @@ public class Salary {
         double pay4 = wage * 1.50 * overtimeNightMinutes / 60.0;
         long total = Math.round(pay1 + pay2 + pay3 + pay4);
 
-        if (show) {
-            System.out.println("通常    : " + format(baseNormal) + " → " + Math.round(pay1) + "円");
-            System.out.println("深夜    : " + format(baseNight) + " → " + Math.round(pay2) + "円");
-            System.out.println("残業    : " + format(overtimeNormalMinutes) + " → " + Math.round(pay3) + "円");
-            System.out.println("深夜残業: " + format(overtimeNightMinutes) + " → " + Math.round(pay4) + "円");
-            System.out.println("合計    : " + total + "円");
-        }
-        return total;
+        return new PayResult(baseNormal, Math.round(pay1),
+                             baseNight, Math.round(pay2),
+                             overtimeNormalMinutes, Math.round(pay3),
+                             overtimeNightMinutes, Math.round(pay4),
+                             total);
     }
+
+    // 1日分の給料を計算する。show が true なら内訳も表示する（コンソール版用）
+    static long calculate(int wage, String startText, String endText,
+                          int breakMinutes, String breakStartText, boolean show) {
+        PayResult r = calculateDetail(wage, startText, endText, breakMinutes, breakStartText);
+        if (show) {
+            System.out.println("通常    : " + format(r.normalMinutes()) + " → " + r.normalPay() + "円");
+            System.out.println("深夜    : " + format(r.nightMinutes()) + " → " + r.nightPay() + "円");
+            System.out.println("残業    : " + format(r.overtimeMinutes()) + " → " + r.overtimePay() + "円");
+            System.out.println("深夜残業: " + format(r.overtimeNightMinutes()) + " → " + r.overtimeNightPay() + "円");
+            System.out.println("合計    : " + r.total() + "円");
+        }
+        return r.total();
+    }
+        
 
        // 勤務を1日分入力して、給料を表示し、ファイルに保存する
     static void recordWork(Scanner sc) {
@@ -233,8 +253,9 @@ public class Salary {
 
             if (choice.equals("1")) {
                 recordWork(sc);
-            } else if (choice.equals("2")) {
-                                showSummary(sc);
+                 } else if (choice.equals("2")) {
+                showSummary(sc);
+            } else if (choice.equals("3")) {
                 System.out.println("終了します。お疲れさまでした！");
                 break;
             } else {
