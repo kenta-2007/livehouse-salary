@@ -32,10 +32,12 @@ public class WebApp {
             table { width: 100%%; margin-top: 12px; border-collapse: collapse; }
             th, td { padding: 8px; border-bottom: 1px solid #ccd; text-align: left; }
             td.num, th.num { text-align: right; }
+            .status { margin-top: 12px; padding: 16px; border: 2px solid #8aa; border-radius: 8px; font-size: 18px; }
+            .punch button { padding: 20px; font-size: 18px; }
           </style>
         </head>
         <body>
-          <nav><a href="/">計算・記録</a><a href="/summary">集計</a></nav>
+          <nav><a href="/punch">タイムカード</a><a href="/">計算・記録</a><a href="/summary">集計</a></nav>
           %s
         </body>
         </html>
@@ -64,6 +66,7 @@ public class WebApp {
         server.createContext("/", WebApp::handleCalc);
         server.createContext("/record", WebApp::handleRecord);
         server.createContext("/summary", WebApp::handleSummary);
+        server.createContext("/punch", WebApp::handlePunch);
         server.start();
         System.out.println("サーバーを起動しました: http://localhost:8080");
     }
@@ -148,6 +151,55 @@ public class WebApp {
                 }
             }
         }
+        send(exchange, html.toString());
+    }
+
+    // 「/punch」：タイムカード。ボタンが押されたら（POST）打刻して、今の状態を表示する
+    static void handlePunch(HttpExchange exchange) throws IOException {
+        String message = "";
+        if (exchange.getRequestMethod().equals("POST")) {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            Map<String, String> params = parseQuery(body);
+            try {
+                message = switch (params.getOrDefault("action", "")) {
+                    case "in" -> TimeCard.clockIn(Integer.parseInt(params.get("wage")));
+                    case "breakStart" -> TimeCard.startBreak();
+                    case "breakEnd" -> TimeCard.endBreak();
+                    case "out" -> TimeCard.clockOut();
+                    default -> "不明な操作です。";
+                };
+            } catch (RuntimeException e) {
+                message = "入力内容を確認してください。";
+            }
+        }
+
+        TimeCard.Punch p = TimeCard.load();
+        StringBuilder html = new StringBuilder("<h1>タイムカード</h1>");
+        if (!message.isEmpty()) {
+            html.append("<p class=\"result\">").append(message).append("</p>");
+        }
+        html.append("<form action=\"/punch\" method=\"post\" class=\"punch\">");
+        if (p == null) {
+            html.append("<div class=\"status\">今は勤務していません</div>")
+                .append("<label>時給（円）<input type=\"number\" name=\"wage\" value=\"1200\" required></label>")
+                .append("<div class=\"buttons\"><button name=\"action\" value=\"in\">出勤</button></div>");
+        } else if (p.onBreak()) {
+            html.append("<div class=\"status\">休憩中（").append(p.breakStart()).append("〜）</div>")
+                .append("<div class=\"buttons\"><button name=\"action\" value=\"breakEnd\">休憩終了</button>")
+                .append("<button name=\"action\" value=\"out\">退勤</button></div>");
+        } else {
+            html.append("<div class=\"status\">勤務中（").append(p.start()).append("〜、時給")
+                .append(p.wage()).append("円）");
+            if (p.breakTaken()) {
+                html.append("<br>休憩: ").append(p.breakStart()).append("〜").append(p.breakEnd());
+            }
+            html.append("</div><div class=\"buttons\">");
+            if (!p.breakTaken()) {
+                html.append("<button name=\"action\" value=\"breakStart\">休憩開始</button>");
+            }
+            html.append("<button name=\"action\" value=\"out\">退勤</button></div>");
+        }
+        html.append("</form>");
         send(exchange, html.toString());
     }
 
