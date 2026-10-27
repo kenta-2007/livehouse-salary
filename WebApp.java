@@ -32,10 +32,15 @@ public class WebApp {
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <title>給料計算</title>
           <style>
+            html, body { overflow-x: hidden; }
             body { font-family: sans-serif; max-width: 460px; margin: 24px auto; padding: 0 16px; }
             nav { display: flex; gap: 16px; align-items: center; margin-bottom: 8px; }
             label { display: block; margin-top: 12px; }
-            input, select { width: 100%%; padding: 8px; font-size: 16px; box-sizing: border-box; }
+            input, select { width: 100%%; max-width: 100%%; min-width: 0; padding: 8px; font-size: 16px; box-sizing: border-box; }
+            /* iPhoneでは日付・時刻の入力欄が画面からはみ出すことがあるので、幅を固定する */
+            input[type="date"], input[type="time"] { -webkit-appearance: none; appearance: none; display: block; min-height: 2.6em; text-align: left; background: #fff; border: 1px solid #ccd; border-radius: 4px; color: inherit; }
+            .buttons select { flex: 2; }
+            .table-wrap { overflow-x: auto; }
             .buttons { display: flex; gap: 8px; margin-top: 16px; }
             button { flex: 1; padding: 12px; font-size: 16px; }
             .result { margin-top: 20px; padding: 16px; background: #eef6f4; border-radius: 8px; font-size: 20px; }
@@ -276,7 +281,7 @@ public class WebApp {
         }
         html.append("</select><button type=\"submit\">表示</button></form>");
 
-        html.append("<table><tr><th>月</th><th class=\"num\">勤務日数</th><th class=\"num\">合計</th></tr>");
+        html.append("<div class=\"table-wrap\"><table><tr><th>月</th><th class=\"num\">勤務日数</th><th class=\"num\">合計</th></tr>");
         for (int m = 1; m <= 12; m++) {
             if (s.monthDays()[m] > 0) {
                 html.append("<tr><td><a href=\"/records?year=").append(year).append("&month=").append(m)
@@ -285,7 +290,7 @@ public class WebApp {
                     .append(String.format("%,d", s.monthTotal()[m])).append("円</td></tr>");
             }
         }
-        html.append("</table>");
+        html.append("</table></div>");
         html.append("<p>月をタップすると、その月の記録の一覧が見られます。</p>");
 
         html.append("<div class=\"result\">年間合計 <strong>")
@@ -380,7 +385,7 @@ public class WebApp {
         StringBuilder html = new StringBuilder();
         html.append("<h1>").append(year).append("年").append(month).append("月の記録</h1>");
         html.append(message);
-        html.append("<table><tr><th>日付</th><th>勤務</th><th class=\"num\">給料</th><th></th></tr>");
+        html.append("<div class=\"table-wrap\"><table><tr><th>日付</th><th>勤務</th><th class=\"num\">給料</th><th></th></tr>");
         int count = 0;
         long sum = 0;
         // 日付の順に並べて表示する（行番号はそのまま持っておく）
@@ -405,7 +410,7 @@ public class WebApp {
                 .append("<td class=\"ops\"><a href=\"/edit?").append(ids).append("\">修正</a>")
                 .append("<a href=\"/delete?").append(ids).append("\">削除</a></td></tr>");
         }
-        html.append("</table>");
+        html.append("</table></div>");
         if (count == 0) {
             html.append("<p>この月の記録はありません。</p>");
         } else {
@@ -555,13 +560,13 @@ public class WebApp {
     static String resultHtml(Map<String, String> params, Salary.PayResult r) {
         return "<div class=\"result\">" + escape(params.get("start")) + "〜" + escape(params.get("end"))
              + " の給料は <strong>" + String.format("%,d", r.total()) + "円</strong> です</div>"
-             + "<table>"
+             + "<div class=\"table-wrap\"><table>"
              + "<tr><th>区分</th><th>時間</th><th class=\"num\">金額</th></tr>"
              + row("通常", r.normalMinutes(), r.normalPay())
              + row("深夜（×1.25）", r.nightMinutes(), r.nightPay())
              + row("残業（×1.25）", r.overtimeMinutes(), r.overtimePay())
              + row("深夜残業（×1.50）", r.overtimeNightMinutes(), r.overtimeNightPay())
-             + "</table>";
+             + "</table></div>";
     }
 
     // 内訳の表の1行分のHTMLを作る
