@@ -55,6 +55,8 @@ public class WebApp {
             td.ops { white-space: nowrap; text-align: right; }
             td.ops a { display: block; padding: 4px 0; }
             .danger { background: #b4471f; color: #fff; border: none; border-radius: 4px; }
+            .sub { margin-top: 32px; text-align: right; font-size: 13px; }
+            .sub a { color: #889; }
             .status { margin-top: 12px; padding: 16px; border: 2px solid #8aa; border-radius: 8px; font-size: 18px; }
             .punch button { padding: 20px; font-size: 18px; }
             button.link { padding: 0; font-size: 14px; background: none; border: none; color: #06c; text-decoration: underline; cursor: pointer; }
@@ -359,10 +361,24 @@ public class WebApp {
                     case "breakStart" -> TimeCard.startBreak();
                     case "breakEnd" -> TimeCard.endBreak();
                     case "out" -> TimeCard.clockOut();
+                    case "outAt" -> TimeCard.clockOutAt(params.getOrDefault("end", ""));
+                    case "cancel" -> TimeCard.cancel();
                     default -> "不明な操作です。";
                 };
             } catch (RuntimeException e) {
-                message = "入力内容を確認してください。";
+                message = errorText(e, "入力内容を確認してください。");
+            }
+        } else {
+            // 「出勤を取り消す」のリンクから来たときは、確認画面を出す（ここではまだ取り消さない）
+            Map<String, String> query = parseQuery(exchange.getRequestURI().getRawQuery());
+            TimeCard.Punch p = TimeCard.load();
+            if ("cancel".equals(query.get("confirm")) && p != null) {
+                send(exchange, "<h1>出勤の取り消し</h1>"
+                        + "<p>" + p.date() + " " + p.start() + " の出勤を取り消します。記録は残りません。よろしいですか？</p>"
+                        + "<form action=\"/punch\" method=\"post\" class=\"buttons\">"
+                        + "<button name=\"action\" value=\"cancel\" class=\"danger\">取り消す</button></form>"
+                        + "<p><a href=\"/punch\">やめる</a></p>");
+                return;
             }
         }
 
@@ -375,6 +391,12 @@ public class WebApp {
         if (p == null) {
             html.append("<div class=\"status\">今は勤務していません</div>")
                 .append("<div class=\"buttons\"><button name=\"action\" value=\"in\">出勤</button></div>");
+        } else if (p.forgotClockOut()) {
+            // 退勤の押し忘れ：退勤時刻を入力してもらう
+            html.append("<div class=\"status\">").append(p.date()).append(" ").append(p.start())
+                .append("に出勤したままです。<br>退勤時刻を入力してください。</div>")
+                .append("<label>退勤時刻<input type=\"time\" name=\"end\" required></label>")
+                .append("<div class=\"buttons\"><button name=\"action\" value=\"outAt\">この時刻で退勤</button></div>");
         } else if (p.onBreak()) {
             html.append("<div class=\"status\">休憩中（").append(p.breakStart()).append("〜）</div>")
                 .append("<div class=\"buttons\"><button name=\"action\" value=\"breakEnd\">休憩終了</button>")
@@ -391,6 +413,10 @@ public class WebApp {
             html.append("<button name=\"action\" value=\"out\">退勤</button></div>");
         }
         html.append("</form>");
+        if (p != null) {
+            // 間違えて出勤したとき用の、目立たないリンク
+            html.append("<p class=\"sub\"><a href=\"/punch?confirm=cancel\">出勤を取り消す</a></p>");
+        }
         send(exchange, html.toString());
     }
 
