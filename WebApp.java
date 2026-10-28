@@ -229,7 +229,7 @@ public class WebApp {
             try {
                 resultHtml = resultHtml(params, calc(params, Settings.load().wage()));
             } catch (RuntimeException e) {
-                resultHtml = "<p class=\"error\">入力内容を確認してください。</p>";
+                resultHtml = "<p class=\"error\">" + errorText(e, "入力内容を確認してください。") + "</p>";
             }
         }
         send(exchange, form(params, resultHtml));
@@ -253,7 +253,8 @@ public class WebApp {
                     breakMinutes(params), breakStart(params), r.total());
             resultHtml = "<p class=\"result\">" + date + " の勤務を記録しました！</p>" + resultHtml(params, r);
         } catch (RuntimeException e) {
-            resultHtml = "<p class=\"error\">入力内容を確認してください（記録するときは日付も必要です）。</p>";
+            resultHtml = "<p class=\"error\">"
+                    + errorText(e, "入力内容を確認してください（記録するときは勤務日も必要です）。") + "</p>";
         }
         send(exchange, form(params, resultHtml));
     }
@@ -543,7 +544,8 @@ public class WebApp {
             }
         } catch (RuntimeException ex) {
             // 入力がおかしいときは、入力した内容のままフォームを出し直す
-            send(exchange, String.format(EDIT_FORM, "<p class=\"error\">入力内容を確認してください。</p>", hidden(e),
+            send(exchange, String.format(EDIT_FORM,
+                    "<p class=\"error\">" + errorText(ex, "入力内容を確認してください。") + "</p>", hidden(e),
                     escape(params.getOrDefault("date", "")), escape(params.getOrDefault("wage", "")),
                     escape(params.getOrDefault("start", "")), escape(params.getOrDefault("end", "")),
                     escape(params.getOrDefault("break", "0")), escape(params.getOrDefault("breakStart", "")),
@@ -647,8 +649,12 @@ public class WebApp {
     }
 
     static String breakStart(Map<String, String> params) {
-        String value = params.getOrDefault("breakStart", "");
-        return value.isEmpty() ? "0:00" : value;
+        return params.getOrDefault("breakStart", "");
+    }
+
+    // エラーの説明文。入力チェックで止まったときはその理由を、それ以外は決まった文を出す
+    static String errorText(RuntimeException e, String fallback) {
+        return e instanceof Salary.InputException ? escape(e.getMessage()) : fallback;
     }
 
     // 計算結果（合計と内訳の表）のHTMLを作る

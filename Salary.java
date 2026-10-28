@@ -25,10 +25,53 @@ public class Salary {
 
     // "18:30" のような時刻を、0時からの「分」に変換する
     static int toMinutes(String time) {
+        // 「18:30」「8:05」のような形か確かめる（数字1〜2けた ＋ : ＋ 数字2けた）
+        if (time == null || !time.matches("\\d{1,2}:\\d{2}")) {
+            throw new InputException("時刻は 18:30 のように入力してください。");
+        }
         String[] parts = time.split(":");
         int hour = Integer.parseInt(parts[0]);
         int minute = Integer.parseInt(parts[1]);
+        if (hour > 23 || minute > 59) {
+            throw new InputException("時刻は 0:00〜23:59 の範囲で入力してください。");
+        }
         return hour * 60 + minute;
+    }
+
+    // 入力内容がおかしいときに使うエラー。message には、画面にそのまま出せる説明を入れる
+    static class InputException extends RuntimeException {
+        private static final long serialVersionUID = 1L;  // Javaの決まりごと（気にしなくてOK）
+
+        InputException(String message) {
+            super(message);
+        }
+    }
+
+    // 勤務と休憩の入力をチェックする。おかしければ InputException を投げる
+    static void checkShift(int start, int end, int breakMinutes, String breakStartText) {
+        int workMinutes = end - start;  // end は日付またぎの調整後
+        if (workMinutes == 0) {
+            throw new InputException("開始時刻と終了時刻が同じです。");
+        }
+        if (breakMinutes < 0) {
+            throw new InputException("休憩は0分以上で入力してください。");
+        }
+        if (breakMinutes == 0) {
+            return;  // 休憩なし
+        }
+        if (breakMinutes >= workMinutes) {
+            throw new InputException("休憩が勤務時間（" + format(workMinutes) + "）以上になっています。");
+        }
+        if (breakStartText == null || breakStartText.isEmpty()) {
+            throw new InputException("休憩がある場合は、休憩の開始時刻も入力してください。");
+        }
+        int breakStart = toMinutes(breakStartText);
+        if (breakStart < start) {
+            breakStart += 1440;  // 日付をまたいだ休憩
+        }
+        if (breakStart + breakMinutes > end) {
+            throw new InputException("休憩の時間帯が、勤務時間の中に収まっていません。");
+        }
     }
 
     // 2つの時間帯 [aStart, aEnd] と [bStart, bEnd] が重なっている長さ（分）
@@ -65,6 +108,11 @@ public class Salary {
         // 終了が開始より前なら、日付をまたいだとみなして24時間（1440分）足す
         if (end < start) {
             end += 1440;
+        }
+        // 計算する前に、入力がおかしくないか確かめる（おかしければここで止まる）
+        checkShift(start, end, breakMinutes, breakStartText);
+        if (breakMinutes == 0) {
+            breakStartText = "0:00";  // 休憩なしのときは、休憩の開始時刻は使わない
         }
         int workMinutes = end - start;
 
@@ -158,7 +206,13 @@ public class Salary {
             breakStartText = sc.next();
         }
 
-        long total = calculate(wage, startText, endText, breakMinutes, breakStartText, true);
+        long total;
+        try {
+            total = calculate(wage, startText, endText, breakMinutes, breakStartText, true);
+        } catch (InputException e) {
+            System.out.println(e.getMessage() + " 記録しませんでした。");
+            return;
+        }
 
         try {
             saveRecord(date, wage, startText, endText, breakMinutes, breakStartText, total);
@@ -171,6 +225,9 @@ public class Salary {
     // 勤務1日分を、CSVの1行の形（カンマ区切り）にする
     static String toLine(LocalDate date, int wage, String startText, String endText,
                          int breakMinutes, String breakStartText, long total) {
+        if (breakMinutes == 0) {
+            breakStartText = "0:00";  // 休憩なしのときは、休憩の開始時刻を空欄にせず 0:00 で保存する
+        }
         return date + "," + wage + "," + startText + "," + endText + ","
              + breakMinutes + "," + breakStartText + "," + total;
     }

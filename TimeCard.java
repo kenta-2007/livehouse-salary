@@ -97,7 +97,13 @@ public class TimeCard {
             }
         }
 
-        Salary.PayResult r = Salary.calculateDetail(p.wage(), p.start(), end, breakMinutes, breakStart);
+        Salary.PayResult r;
+        try {
+            r = Salary.calculateDetail(p.wage(), p.start(), end, breakMinutes, breakStart);
+        } catch (Salary.InputException e) {
+            // 出勤した同じ分にすぐ退勤した場合など。記録せず、勤務中のままにしておく
+            return e.getMessage() + " 1分以上たってから退勤してください。";
+        }
         Salary.saveRecord(LocalDate.parse(p.date()), p.wage(), p.start(), end, breakMinutes, breakStart, r.total());
         Files.delete(Path.of(PUNCH_FILE));
         return p.start() + "〜" + end + " の勤務を記録しました。給料は "
