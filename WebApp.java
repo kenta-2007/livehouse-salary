@@ -108,12 +108,52 @@ public class WebApp {
             .result { margin: 0 0 20px; padding: 12px 16px; border-radius: 10px; background: #e2f1ec; color: #0f4d40; }
             .error { margin: 0 0 20px; padding: 12px 16px; border-radius: 10px; background: #fdecea; color: #a1281c; }
 
-            /* ---- 扶養のバー ---- */
-            .row.stack { display: block; padding-top: 12px; padding-bottom: 12px; }
+            /* ---- 集計：次の給料日（大きく表示） ---- */
+            .hero { display: flex; flex-direction: column; align-items: center; text-align: center;
+                    margin: 0 0 26px; padding: 16px 16px 14px; background: #fff; border-radius: 10px; }
+            .hero .hl { display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; gap: 0 6px; }
+            .hero .day { font-size: 28px; font-weight: 800; color: var(--tint); }
+            .hero .yen { font-size: 40px; font-weight: 800; color: var(--tint); line-height: 1.15; }
+            .hero .suf { font-size: 16px; font-weight: 700; }
+            .hero .big { font-size: 30px; font-weight: 800; color: var(--tint); line-height: 1.3; }
+            .hero .big.off { color: var(--sub); }
+            .hero .big.rest { color: #96600a; }
+            .hero .big.alert { color: var(--red); }
+            .pill { margin-top: 8px; padding: 4px 12px; font-size: 13px; color: var(--sub);
+                    background: var(--bg); border-radius: 999px; }
+
+            /* ---- 集計：扶養のバー ---- */
+            .row.stack { display: block; padding-top: 12px; padding-bottom: 14px; }
             .line { display: flex; justify-content: space-between; gap: 12px; }
-            .bar { height: 4px; margin-top: 10px; border-radius: 2px; background: #e5e5ea; overflow: hidden; }
-            .bar i { display: block; height: 100%%; background: var(--tint); }
-            .bar.over i { background: var(--red); }
+            .meter { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+            .meter span { font-size: 12px; color: var(--sub); white-space: nowrap; }
+            .meter b { font-size: 14px; color: var(--tint); }
+            .meter.over b { color: var(--red); }
+            .bar { flex: 1; height: 10px; border-radius: 999px; background: #e5e5ea; overflow: hidden; }
+            .bar i { display: block; height: 100%%; border-radius: 999px; background: var(--tint); }
+            .meter.over .bar i { background: var(--red); }
+
+            /* ---- 集計：給料日ごとのカード ---- */
+            .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0 0 8px 16px; font-size: 12px; color: var(--sub); }
+            .legend span { display: flex; align-items: center; gap: 6px; }
+            .legend i { width: 5px; height: 14px; border-radius: 2px; background: var(--tint); }
+            .legend i.plan { background: #c7c7cc; }
+            .cards { display: flex; flex-direction: column; gap: 8px; margin: 0 0 26px; }
+            .card { display: flex; align-items: center; gap: 10px; min-height: 54px; padding: 6px 12px;
+                    box-sizing: border-box; background: #fff; border-radius: 8px; border-left: 6px solid var(--tint); }
+            a.card, a.card:visited { color: var(--text); }
+            .card.plan { border-left-color: #c7c7cc; }
+            .card .l { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+            .card .l b { font-size: 16px; font-weight: 600; }
+            .card .l small { font-size: 12px; }
+            .days { flex: none; width: 40px; height: 40px; border-radius: 50%%; border: 1.5px solid #e5e5ea;
+                    box-sizing: border-box; display: flex; flex-direction: column; align-items: center;
+                    justify-content: center; line-height: 1.1; }
+            .days small { font-size: 9px; }
+            .days b { font-size: 12px; }
+            .card .amt { font-size: 16px; font-weight: 600; white-space: nowrap; }
+            .card.sum { justify-content: space-between; min-height: 46px; padding: 0 16px; border-left: 0;
+                        font-size: 16px; font-weight: 600; }
 
             /* ---- 下のメニュー ---- */
             nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: flex;
@@ -349,13 +389,15 @@ public class WebApp {
 
         // ---- 扶養（今年の合計と、ラインまでのバー） ----
         long limit = s.fuyouLimit();
-        double percent = limit > 0 ? Math.min(100.0, s.yearTotal() * 100.0 / limit) : 100.0;
+        long percent = limit > 0 ? s.yearTotal() * 100 / limit : 100;  // 文字で出す割合（100%を超えることもある）
+        double width = limit > 0 ? Math.min(100.0, s.yearTotal() * 100.0 / limit) : 100.0;  // バーの長さ
         boolean over = s.remaining() < 0;
         html.append("<div class=\"sec\">扶養（").append(year).append("年）</div>")
             .append("<div class=\"group\"><div class=\"row stack\"><div class=\"line\"><span>今年の合計</span><span>")
             .append(yen(s.yearTotal())).append("</span></div>")
-            .append("<div class=\"bar").append(over ? " over" : "").append("\"><i style=\"width:")
-            .append(String.format(Locale.ROOT, "%.1f", percent)).append("%\"></i></div></div>");
+            .append("<div class=\"meter").append(over ? " over" : "").append("\"><div class=\"bar\"><i style=\"width:")
+            .append(String.format(Locale.ROOT, "%.1f", width)).append("%\"></i></div>")
+            .append("<span>扶養ラインの <b>").append(percent).append("%</b></span></div></div>");
         if (over) {
             html.append("<div class=\"row warn\"><span>超えた金額</span><span>")
                 .append(yen(-s.remaining())).append("</span></div>");
@@ -376,22 +418,29 @@ public class WebApp {
         }
         html.append("</select></form></div>");
 
-        html.append("<div class=\"group\">");
         if (s.rows().isEmpty()) {
-            html.append("<div class=\"row\"><span class=\"muted\">この年の記録はありません</span></div>");
+            html.append("<div class=\"group\"><div class=\"row\"><span class=\"muted\">この年の記録はありません</span></div></div>");
+            send(exchange, html.toString());
+            return;
         }
+        // 左端の色の意味（締め日を過ぎた期間は「確定」、まだ働いている期間は「予定」）
+        html.append("<div class=\"legend\"><span><i></i>確定（締め済み）</span>")
+            .append("<span><i class=\"plan\"></i>予定（集計中）</span></div>");
+
+        LocalDate today = LocalDate.now();
+        html.append("<div class=\"cards\">");
         for (Salary.Row row : s.rows()) {
             PayPeriod p = row.period();
-            html.append("<a class=\"row\" href=\"/records?closing=").append(p.closingMonth()).append("\">")
-                .append("<span class=\"l\">").append(p.paydayText())
-                .append("<small>").append(p.rangeText()).append("・").append(row.days()).append("日</small></span>")
-                .append("<span class=\"r\">").append(yen(row.total())).append("<i class=\"chev\"></i></span></a>");
+            boolean plan = !p.end().isBefore(today);  // 締め日がまだ来ていなければ「予定」
+            html.append("<a class=\"card").append(plan ? " plan" : "").append("\" href=\"/records?closing=")
+                .append(p.closingMonth()).append("\">")
+                .append("<span class=\"l\"><b>").append(p.paydayText()).append("</b>")
+                .append("<small>").append(p.rangeText()).append(plan ? "・予定" : "").append("</small></span>")
+                .append("<span class=\"days\"><small>勤務</small><b>").append(row.days()).append("日</b></span>")
+                .append("<span class=\"amt\">").append(yen(row.total())).append("</span><i class=\"chev\"></i></a>");
         }
-        if (!s.rows().isEmpty()) {
-            html.append("<div class=\"row total\"><span>合計</span><span>")
-                .append(yen(s.yearTotal())).append("</span></div>");
-        }
-        html.append("</div>");
+        html.append("<div class=\"card sum\"><span>").append(year).append("年の合計</span><span>")
+            .append(yen(s.yearTotal())).append("</span></div></div>");
         send(exchange, html.toString());
     }
 
@@ -413,9 +462,10 @@ public class WebApp {
             }
         }
 
-        return "<div class=\"sec\">次の給料日</div><div class=\"group\">"
-             + "<div class=\"row\"><span>" + next.paydayText() + "</span><span class=\"amount\">" + yen(total) + "</span></div>"
-             + "<div class=\"row\"><span>勤務分</span><span class=\"v\">" + next.rangeText() + "</span></div></div>";
+        return "<div class=\"hero\"><small>次の給料日</small>"
+             + "<div class=\"hl\"><span class=\"day\">" + next.paydayText() + "</span><span class=\"suf\">に</span></div>"
+             + "<div class=\"hl\"><span class=\"yen\">" + yen(total) + "</span><span class=\"suf\">入ります</span></div>"
+             + "<span class=\"pill\">" + next.rangeText() + " の勤務分</span></div>";
     }
 
     // 「/punch」：タイムカード。ボタンが押されたら（POST）打刻して、今の状態を表示する
@@ -459,26 +509,28 @@ public class WebApp {
             html.append("<p class=\"result\">").append(message).append("</p>");
         }
         html.append("<form action=\"/punch\" method=\"post\" class=\"punch\">");
+        // 今の状態を、上に大きく表示する
         if (p == null) {
-            html.append("<div class=\"group\">").append(infoRow("状態", "勤務していません")).append("</div>")
+            html.append(hero("今の状態", "<span class=\"big off\">勤務していません</span>"))
                 .append("<div class=\"buttons\"><button name=\"action\" value=\"in\">出勤</button></div>");
         } else if (p.forgotClockOut()) {
             // 退勤の押し忘れ：退勤時刻を入力してもらう
-            html.append("<div class=\"group\"><div class=\"row warn\"><span>状態</span><span>退勤の押し忘れ</span></div>")
-                .append(infoRow("出勤", p.date() + " " + p.start()))
-                .append("<label class=\"row\"><span>退勤時刻</span><input type=\"time\" name=\"end\" required></label></div>")
+            html.append(hero("今の状態", "<span class=\"big alert\">退勤の押し忘れ</span>",
+                        p.date() + " " + p.start() + " に出勤"))
+                .append("<div class=\"group\"><label class=\"row\"><span>退勤時刻</span>")
+                .append("<input type=\"time\" name=\"end\" required></label></div>")
                 .append("<div class=\"buttons\"><button name=\"action\" value=\"outAt\" class=\"out\">この時刻で退勤</button></div>");
         } else if (p.onBreak()) {
-            html.append("<div class=\"group\">").append(infoRow("状態", "休憩中"))
-                .append(infoRow("出勤", p.start())).append(infoRow("休憩", p.breakStart() + "〜")).append("</div>")
+            html.append(hero("今の状態", "<span class=\"big rest\">休憩中</span><span class=\"suf\">"
+                        + p.breakStart() + "から</span>", p.start() + " に出勤"))
                 .append("<div class=\"buttons\"><button name=\"action\" value=\"breakEnd\" class=\"break\">休憩終了</button>")
                 .append("<button name=\"action\" value=\"out\" class=\"out\">退勤</button></div>");
         } else {
-            html.append("<div class=\"group\">").append(infoRow("状態", "勤務中")).append(infoRow("出勤", p.start()));
-            if (p.breakTaken()) {
-                html.append(infoRow("休憩", p.breakStart() + "〜" + p.breakEnd()));
-            }
-            html.append("</div><div class=\"buttons\">");
+            String big = "<span class=\"big\">勤務中</span><span class=\"suf\">" + p.start() + "から</span>";
+            html.append(p.breakTaken()
+                    ? hero("今の状態", big, "休憩 " + p.breakStart() + "〜" + p.breakEnd())
+                    : hero("今の状態", big));
+            html.append("<div class=\"buttons\">");
             if (!p.breakTaken()) {
                 html.append("<button name=\"action\" value=\"breakStart\" class=\"break\">休憩開始</button>");
             }
@@ -490,6 +542,17 @@ public class WebApp {
             html.append("<p class=\"sub\"><a href=\"/punch?confirm=cancel\">出勤を取り消す</a></p>");
         }
         send(exchange, html.toString());
+    }
+
+    // 画面の上に置く、大きな表示の箱
+    // label：上の小さい見出し、main：大きく出す部分、pill：下の丸い枠の文字（なければ出さない）
+    static String hero(String label, String main, String pill) {
+        return "<div class=\"hero\"><small>" + label + "</small><div class=\"hl\">" + main + "</div>"
+             + (pill == null ? "" : "<span class=\"pill\">" + pill + "</span>") + "</div>";
+    }
+
+    static String hero(String label, String main) {
+        return hero(label, main, null);
     }
 
     // 「左に項目名、右に値」の1行
@@ -520,9 +583,11 @@ public class WebApp {
         html.append("<a class=\"back\" href=\"/summary?year=").append(period.payday().getYear()).append("\">‹ 集計</a>");
         html.append("<h1>").append(period.paydayText()).append("支給分</h1>");
         html.append(message);
-        html.append("<div class=\"sec\">").append(period.rangeText()).append(" の勤務</div><div class=\"group\">");
+
         int count = 0;
         long sum = 0;
+        boolean plan = !period.end().isBefore(LocalDate.now());  // 締め日がまだ来ていなければ「予定」
+        StringBuilder cards = new StringBuilder();
         // 日付の順に並べて表示する（行番号はそのまま持っておく）
         List<Salary.Entry> entries = Salary.loadEntries();
         entries.sort(Comparator.comparing(Salary.Entry::date).thenComparing(Salary.Entry::start));
@@ -532,22 +597,26 @@ public class WebApp {
             }
             count++;
             sum += e.total();
-            html.append("<a class=\"row\" href=\"/edit?").append(ids(e)).append("\"><span class=\"l\">")
-                .append(e.date().getMonthValue()).append("/").append(e.date().getDayOfMonth()).append("　")
-                .append(escape(e.start())).append("〜").append(escape(e.end())).append("<small>");
+            cards.append("<a class=\"card").append(plan ? " plan" : "").append("\" href=\"/edit?").append(ids(e))
+                .append("\"><span class=\"l\"><b>").append(e.date().getMonthValue()).append("/")
+                .append(e.date().getDayOfMonth()).append("　").append(escape(e.start())).append("〜")
+                .append(escape(e.end())).append("</b><small>");
             if (e.breakMinutes() > 0) {
-                html.append("休憩").append(e.breakMinutes()).append("分・");
+                cards.append("休憩").append(e.breakMinutes()).append("分・");
             }
-            html.append("時給").append(e.wage()).append("円</small></span>")
-                .append("<span class=\"r\">").append(yen(e.total())).append("<i class=\"chev\"></i></span></a>");
+            cards.append("時給").append(e.wage()).append("円</small></span>")
+                .append("<span class=\"amt\">").append(yen(e.total())).append("</span><i class=\"chev\"></i></a>");
         }
+
+        // 上に、この給料日の合計を大きく表示する
+        html.append(hero(period.rangeText() + " の勤務分",
+                "<span class=\"yen\">" + yen(sum) + "</span>",
+                count + "日勤務" + (plan ? "・予定" : "")));
         if (count == 0) {
-            html.append("<div class=\"row\"><span class=\"muted\">この期間の記録はありません</span></div>");
+            html.append("<div class=\"group\"><div class=\"row\"><span class=\"muted\">この期間の記録はありません</span></div></div>");
         } else {
-            html.append("<div class=\"row total\"><span>").append(count).append("日勤務</span><span>")
-                .append(yen(sum)).append("</span></div>");
+            html.append("<div class=\"sec\">勤務した日</div><div class=\"cards\">").append(cards).append("</div>");
         }
-        html.append("</div>");
         return html.toString();
     }
 
@@ -778,9 +847,9 @@ public class WebApp {
 
     // 計算結果（合計と内訳）のHTMLを作る
     static String resultHtml(Map<String, String> params, Salary.PayResult r) {
-        return "<div class=\"sec\">計算結果</div><div class=\"group\">"
-             + "<div class=\"row\"><span>" + escape(params.get("start")) + "〜" + escape(params.get("end"))
-             + "</span><span class=\"amount\">" + yen(r.total()) + "</span></div>"
+        return hero(escape(params.get("start")) + "〜" + escape(params.get("end")) + " の給料",
+                    "<span class=\"yen\">" + yen(r.total()) + "</span>")
+             + "<div class=\"sec\">内訳</div><div class=\"group\">"
              + row("通常", r.normalMinutes(), r.normalPay())
              + row("深夜（×1.25）", r.nightMinutes(), r.nightPay())
              + row("残業（×1.25）", r.overtimeMinutes(), r.overtimePay())
