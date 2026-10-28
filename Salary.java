@@ -320,24 +320,10 @@ public class Salary {
 
     // 1年分の集計結果をまとめて入れておく「入れ物」
     // rows には、その年に「支給される」給料が、給料日の順に入る
-    record Summary(int year, List<Row> rows, long yearTotal, long fuyouLimit, Settings settings) {
+    record Summary(int year, List<Row> rows, long yearTotal, long fuyouLimit) {
         // 扶養ラインまでの残り（マイナスなら超えている）
         long remaining() {
             return fuyouLimit - yearTotal;
-        }
-
-        // 今年なら、今のペースで年末まで働いた場合の支給額の見込み。今年でなければ -1
-        long forecast() {
-            LocalDate today = LocalDate.now();
-            if (year != today.getYear()) {
-                return -1;
-            }
-            // 今日働いた分が何月に支給されるか（＝その月の支給分までは、もう働いたことになる）
-            LocalDate payday = PayPeriod.of(today, settings).payday();
-            if (payday.getYear() != year) {
-                return yearTotal;  // 今年最後の給料日の分まで働き終わっていれば、もう確定
-            }
-            return yearTotal * 12 / payday.getMonthValue();
         }
     }
 
@@ -369,7 +355,7 @@ public class Salary {
             }
             closing = closing.plusMonths(1);
         }
-        return new Summary(year, rows, yearTotal, settings.fuyouLimit(), settings);
+        return new Summary(year, rows, yearTotal, settings.fuyouLimit());
     }
 
     // 集計をコンソールに表示する
@@ -398,12 +384,6 @@ public class Salary {
             return;
         }
         System.out.printf("あと %,d円 まで働けます%n", s.remaining());
-        if (s.forecast() >= 0) {
-            System.out.printf("今のペースだと年収の見込みは %,d円 です%n", s.forecast());
-            if (s.forecast() > s.fuyouLimit()) {
-                System.out.println("⚠ このペースだと扶養ラインを超えそうです。シフトを調整しましょう。");
-            }
-        }
     }
 
     public static void main(String[] args) {

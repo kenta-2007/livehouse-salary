@@ -14,6 +14,7 @@ import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -24,7 +25,8 @@ public class WebApp {
     static final long SESSION_SECONDS = 7 * 24 * 60 * 60;  // 7日間
     static final SecureRandom RANDOM = new SecureRandom();
 
-    // すべてのページで共通の枠（%s のところに各ページの中身が入る）
+    // すべてのページで共通の枠（%s のところに各ページの中身と、下のメニューが入る）
+    // デザインは iPhone の「設定」アプリ風：灰色の背景に、白いグループ（行の集まり）を並べる
     static final String LAYOUT = """
         <!DOCTYPE html>
         <html lang="ja">
@@ -34,93 +36,95 @@ public class WebApp {
           <title>給料計算</title>
           <style>
             /* ---- アプリ全体で使う色 ---- */
-            :root { --green: #1a7f6b; --green-light: #eef6f4; --bg: #f5f6f7; --text: #1f2328;
-                    --sub: #6b7280; --line: #e5e7eb; --border: #d1d5db; --red: #d0473a; --amber: #f2a93b; }
+            :root { --tint: #1a7f6b; --bg: #f2f2f7; --text: #000; --sub: #6c6c70; --sep: #c6c6c8;
+                    --red: #c4372b; --amber: #f2a93b; }
 
             /* ---- ページ全体 ---- */
             html, body { overflow-x: hidden; }
-            body { font-family: sans-serif; color: var(--text); background: var(--bg);
-                   max-width: 460px; margin: 0 auto; padding: 8px 16px 0;
+            body { font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN",
+                                "Noto Sans JP", sans-serif;
+                   color: var(--text); background: var(--bg); -webkit-text-size-adjust: 100%%;
+                   max-width: 520px; margin: 0 auto; padding: 8px 16px 0;
                    /* 下のメニューに中身が隠れないように、下に余白をとる */
                    padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
-            h1 { font-size: 26px; margin: 16px 2px; }
-            a, a:visited { color: var(--green); }
+            h1 { font-size: min(32px, 8vw); font-weight: 700; line-height: 1.2; margin: 14px 4px 20px; }
+            a, a:visited { color: var(--tint); text-decoration: none; }
             small, .muted { color: var(--sub); }
+            .back { display: inline-block; margin-top: 4px; padding: 8px 4px 0; font-size: 17px; }
 
-            /* ---- カード（白い箱） ---- */
-            .card, .status, .table-wrap { background: #fff; border-radius: 14px; padding: 16px;
-                    box-shadow: 0 1px 3px rgba(0, 0, 0, .08); margin-bottom: 14px; }
-            .status { font-size: 18px; }
-            .result { margin: 0 0 14px; padding: 14px 16px; background: var(--green-light); border-radius: 14px; }
-            .error { margin: 0 0 14px; padding: 12px 16px; background: #fdecea; color: #a1281c; border-radius: 14px; }
-            .warn { margin: 10px 0 0; padding: 10px 12px; background: #fbe7dd; color: #8a2e10; border-radius: 10px; }
+            /* ---- グループ（白い箱）と、その中の行 ---- */
+            .sec { display: flex; justify-content: space-between; align-items: center; min-height: 22px;
+                   margin: 0 4px 6px 16px; font-size: 13px; color: var(--sub); }
+            .group { background: #fff; border-radius: 10px; overflow: hidden; margin: 0 0 26px; }
+            .foot { margin: -18px 16px 26px; font-size: 13px; color: var(--sub); }
+            .row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+                   min-height: 46px; margin: 0 0 0 16px; padding: 6px 16px 6px 0; box-sizing: border-box;
+                   font-size: 17px; color: var(--text); }
+            /* 行と行の間の線（左を少しあける） */
+            .row + .row { border-top: .5px solid var(--sep); }
+            a.row, a.row:visited { color: var(--text); }
+            .row > span:first-child { flex: none; }
+            .row .l { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+            .row .l small { font-size: 13px; margin-top: 2px; }
+            .row .v { color: var(--sub); text-align: right; white-space: nowrap; }
+            .row .r { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+            .row.total { font-weight: 600; }
+            .row.warn { color: var(--red); }
+            .amount { font-size: 26px; font-weight: 600; color: var(--tint); white-space: nowrap; }
+            /* 右向きの矢印（タップできる行の目印） */
+            .chev { flex: none; width: 8px; height: 8px; margin-right: 2px;
+                    border-top: 2px solid #c4c4c7; border-right: 2px solid #c4c4c7; transform: rotate(45deg); }
 
-            /* ---- 入力欄（すべて同じ形にそろえる） ---- */
-            label { display: block; margin-top: 14px; font-size: 14px; color: var(--sub); }
-            label:first-child { margin-top: 0; }
-            input, select { display: block; width: 100%%; max-width: 100%%; min-width: 0; margin-top: 6px;
-                    padding: 12px; font-size: 16px; color: var(--text); background: #fff;
-                    border: 1px solid var(--border); border-radius: 10px; box-sizing: border-box;
-                    -webkit-appearance: none; appearance: none; min-height: 48px; text-align: left; }
-            /* iPhoneで日付・時刻が真ん中寄せになるのを左寄せにする */
-            input::-webkit-date-and-time-value { text-align: left; }
-            /* 選択欄の右に ▼ を付ける（appearance: none で消えるため） */
-            select { padding-right: 36px; background-repeat: no-repeat; background-position: right 12px center;
-                     background-image: url("data:image/svg+xml,%%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%%3E%%3Cpath d='M1 1l5 5 5-5' stroke='%%236b7280' stroke-width='2' fill='none'/%%3E%%3C/svg%%3E"); }
+            /* ---- 行の中の入力欄（右寄せ・枠なし） ---- */
+            .row input, .row select { flex: 1; width: 100%%; min-width: 0; min-height: 34px; margin: 0; padding: 0;
+                    font: inherit; font-size: 17px; color: var(--sub); text-align: right; text-align-last: right;
+                    background: transparent; border: 0; -webkit-appearance: none; appearance: none; }
+            .row input:focus, .row select:focus { color: var(--text); }
+            .row input::-webkit-date-and-time-value { text-align: right; }
+            .row select { padding-right: 18px; background-repeat: no-repeat; background-position: right center;
+                    background-image: url("data:image/svg+xml,%%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='14'%%3E%%3Cpath d='M2 5l3-3 3 3M2 9l3 3 3-3' stroke='%%238e8e93' stroke-width='1.6' fill='none'/%%3E%%3C/svg%%3E"); }
+            .row .two { display: flex; justify-content: flex-end; gap: 16px; flex: 1; }
+            .row .two select { flex: none; width: auto; }
+            .sec select { min-height: 32px; padding: 0 2px; font: inherit; font-size: 15px; color: var(--tint);
+                    background: transparent; border: 0; }
 
             /* ---- ボタン ---- */
-            .buttons { display: flex; gap: 10px; margin-top: 18px; }
-            button { flex: 1; padding: 14px; font-size: 16px; font-weight: bold; color: #fff;
-                     background: var(--green); border: none; border-radius: 12px; cursor: pointer;
+            .buttons { display: flex; gap: 10px; margin: 0 0 26px; }
+            button { flex: 1; min-height: 50px; padding: 12px; font: inherit; font-size: 17px; font-weight: 600;
+                     color: #fff; background: var(--tint); border: 0; border-radius: 12px; cursor: pointer;
                      -webkit-appearance: none; appearance: none; }
-            button.secondary { background: #fff; color: var(--green); border: 2px solid var(--green); }
+            button.secondary { color: var(--tint); background: #fff; }
             button.danger, button.out { background: var(--red); }
             button.break { background: var(--amber); color: #3b2a07; }
-            button.logout { background: #fff; color: var(--sub); border: 1px solid var(--border); font-weight: normal; }
-            .punch button { padding: 22px; font-size: 18px; }
-            .sub { margin-top: 28px; text-align: right; font-size: 13px; }
-            .sub a { color: #9aa0a6; }
+            .punch button { min-height: 64px; font-size: 19px; }
+            /* グループの中に置く、赤い文字だけのボタン（ログアウト・削除） */
+            .rowbtn, a.rowbtn:visited { display: block; width: 100%%; min-height: 46px; padding: 12px; box-sizing: border-box;
+                      font-size: 17px; font-weight: 400; text-align: center; color: var(--red);
+                      background: #fff; border-radius: 0; }
+            .sub { text-align: center; font-size: 15px; margin: 4px 0 26px; }
+            .sub a, .sub a:visited { color: var(--sub); }
 
-            /* ---- 表（記録の一覧、内訳） ---- */
-            .table-wrap { overflow-x: auto; padding: 4px 12px; }
-            table { width: 100%%; border-collapse: collapse; }
-            th, td { padding: 10px 6px; border-bottom: 1px solid var(--line); text-align: left; }
-            tr:last-child td { border-bottom: none; }
-            th { font-size: 13px; color: var(--sub); }
-            td.num, th.num { text-align: right; white-space: nowrap; }
-            .nw { white-space: nowrap; }
-            td.ops { white-space: nowrap; text-align: right; }
-            td.ops a { display: block; padding: 4px 0; }
+            /* ---- お知らせ ---- */
+            .result { margin: 0 0 20px; padding: 12px 16px; border-radius: 10px; background: #e2f1ec; color: #0f4d40; }
+            .error { margin: 0 0 20px; padding: 12px 16px; border-radius: 10px; background: #fdecea; color: #a1281c; }
 
-            /* ---- 集計 ---- */
-            .label { font-size: 13px; color: var(--sub); }
-            .big { font-size: 30px; font-weight: bold; margin: 4px 0; }
-            .pair { display: flex; justify-content: space-between; align-items: baseline; margin-top: 6px; font-size: 15px; }
-            .bar { height: 10px; background: var(--line); border-radius: 6px; overflow: hidden; margin: 10px 0 8px; }
-            .bar i { display: block; height: 100%%; background: var(--green); }
+            /* ---- 扶養のバー ---- */
+            .row.stack { display: block; padding-top: 12px; padding-bottom: 12px; }
+            .line { display: flex; justify-content: space-between; gap: 12px; }
+            .bar { height: 4px; margin-top: 10px; border-radius: 2px; background: #e5e5ea; overflow: hidden; }
+            .bar i { display: block; height: 100%%; background: var(--tint); }
             .bar.over i { background: var(--red); }
-            .head { display: flex; justify-content: space-between; align-items: center; margin: 22px 2px 8px; }
-            .head b { font-size: 18px; }
-            .head select { width: auto; min-height: 0; margin: 0; padding: 6px 32px 6px 10px; font-size: 15px; }
-            .list { background: #fff; border-radius: 14px; box-shadow: 0 1px 3px rgba(0, 0, 0, .08); overflow: hidden; }
-            .list a.item { display: flex; align-items: center; gap: 8px; padding: 14px 16px;
-                           border-bottom: 1px solid var(--line); color: var(--text); text-decoration: none; }
-            .item .l { flex: 1; min-width: 0; }
-            .item .d { font-weight: bold; }
-            .item .r { text-align: right; font-weight: bold; white-space: nowrap; }
-            .item .r small { display: block; font-weight: normal; }
-            .chev { color: #c0c4cc; font-size: 22px; }
-            .total { display: flex; justify-content: space-between; padding: 14px 16px; font-weight: bold; background: var(--green-light); }
 
-            /* ---- 下のメニュー（スマホアプリのタブのような形） ---- */
+            /* ---- 下のメニュー ---- */
             nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: flex;
-                  background: #fafafa; border-top: 1px solid #dde;
+                  background: rgba(249, 249, 249, .94); border-top: .5px solid var(--sep);
+                  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
                   padding: 6px 0 calc(8px + env(safe-area-inset-bottom)); }
             nav a, nav a:visited { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
-                    font-size: 11px; color: #8a8f98; text-decoration: none; white-space: nowrap; }
-            nav svg { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 2;
+                    font-size: 10px; color: #8e8e93; text-decoration: none; white-space: nowrap; }
+            nav svg { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 1.8;
                       stroke-linecap: round; stroke-linejoin: round; }
-            nav a.on { color: var(--green); font-weight: bold; }
+            nav a.on { color: var(--tint); }
           </style>
         </head>
         <body>
@@ -130,15 +134,20 @@ public class WebApp {
         </html>
         """;
 
-    // 入力フォーム（%s のところに入力欄の初期値と、計算結果が入る）
+    // 計算・記録の入力フォーム（%s のところに入力欄の初期値と、計算結果が入る）
     static final String FORM = """
         <h1>給料計算</h1>
-        <form action="/" method="get" class="card">
-          <label>勤務日<input type="date" name="date" value="%s"></label>
-          <label>開始時刻<input type="time" name="start" value="%s" required></label>
-          <label>終了時刻<input type="time" name="end" value="%s" required></label>
-          <label>休憩（分）<input type="number" name="break" value="%s" min="0"></label>
-          <label>休憩の開始時刻（休憩がある場合）<input type="time" name="breakStart" value="%s"></label>
+        <form action="/" method="get">
+          <div class="group">
+            <label class="row"><span>勤務日</span><input type="date" name="date" value="%s"></label>
+            <label class="row"><span>開始</span><input type="time" name="start" value="%s" required></label>
+            <label class="row"><span>終了</span><input type="time" name="end" value="%s" required></label>
+          </div>
+          <div class="group">
+            <label class="row"><span>休憩（分）</span><input type="number" name="break" value="%s" min="0" inputmode="numeric"></label>
+            <label class="row"><span>休憩の開始</span><input type="time" name="breakStart" value="%s"></label>
+          </div>
+          <p class="foot">休憩の開始は、休憩がある場合だけ入力します。</p>
           <div class="buttons">
             <button type="submit" class="secondary">計算する</button>
             <button type="submit" formaction="/record" formmethod="post">記録する</button>
@@ -222,8 +231,10 @@ public class WebApp {
     static final String LOGIN_PAGE = """
         <h1>ログイン</h1>
         %s
-        <form action="/login" method="post" class="card">
-          <label>パスワード<input type="password" name="password" required autofocus></label>
+        <form action="/login" method="post">
+          <div class="group">
+            <label class="row"><span>パスワード</span><input type="password" name="password" required autofocus></label>
+          </div>
           <div class="buttons"><button type="submit">ログイン</button></div>
         </form>
         """;
@@ -313,7 +324,7 @@ public class WebApp {
             Salary.PayResult r = calc(params, wage);
             Salary.saveRecord(date, wage, params.get("start"), params.get("end"),
                     breakMinutes(params), breakStart(params), r.total());
-            resultHtml = "<p class=\"result\">" + date + " の勤務を記録しました！</p>" + resultHtml(params, r);
+            resultHtml = "<p class=\"result\">" + date + " の勤務を記録しました。</p>" + resultHtml(params, r);
         } catch (RuntimeException e) {
             resultHtml = "<p class=\"error\">"
                     + errorText(e, "入力内容を確認してください（記録するときは勤務日も必要です）。") + "</p>";
@@ -336,34 +347,28 @@ public class WebApp {
         html.append("<h1>集計</h1>");
         html.append(paydayInfoHtml());
 
-        // ---- 扶養ラインのカード（ゲージで、どこまで来たかを表示） ----
+        // ---- 扶養（今年の合計と、ラインまでのバー） ----
         long limit = s.fuyouLimit();
-        long percent = limit > 0 ? Math.min(100, s.yearTotal() * 100 / limit) : 100;
+        double percent = limit > 0 ? Math.min(100.0, s.yearTotal() * 100.0 / limit) : 100.0;
         boolean over = s.remaining() < 0;
-        html.append("<div class=\"card\"><div class=\"label\">扶養ライン（").append(year).append("年）</div>")
-            .append("<div class=\"pair\"><span><b>").append(String.format("%,d", s.yearTotal())).append("円</b> / ")
-            .append(String.format("%,d", limit)).append("円</span><span>").append(percent).append("%</span></div>")
+        html.append("<div class=\"sec\">扶養（").append(year).append("年）</div>")
+            .append("<div class=\"group\"><div class=\"row stack\"><div class=\"line\"><span>今年の合計</span><span>")
+            .append(yen(s.yearTotal())).append("</span></div>")
             .append("<div class=\"bar").append(over ? " over" : "").append("\"><i style=\"width:")
-            .append(percent).append("%\"></i></div>");
+            .append(String.format(Locale.ROOT, "%.1f", percent)).append("%\"></i></div></div>");
         if (over) {
-            html.append("<p class=\"warn\">⚠ 扶養ラインを ")
-                .append(String.format("%,d", -s.remaining())).append("円 超えています</p>");
+            html.append("<div class=\"row warn\"><span>超えた金額</span><span>")
+                .append(yen(-s.remaining())).append("</span></div>");
         } else {
-            html.append("<div class=\"pair\"><span class=\"muted\">あと</span><b>")
-                .append(String.format("%,d", s.remaining())).append("円</b></div>");
-            if (s.forecast() >= 0) {
-                html.append("<div class=\"pair\"><span class=\"muted\">年間の見込み</span><span>")
-                    .append(String.format("%,d", s.forecast())).append("円</span></div>");
-                if (s.forecast() > limit) {
-                    html.append("<p class=\"warn\">⚠ このペースだと扶養ラインを超えそうです</p>");
-                }
-            }
+            html.append("<div class=\"row\"><span>あと</span><span class=\"v\">")
+                .append(yen(s.remaining())).append("</span></div>");
         }
-        html.append("</div>");
+        html.append("</div><p class=\"foot\">上限 ").append(yen(limit)).append("</p>");
 
         // ---- 給料日ごとの一覧（年は、記録がある年から選ぶ） ----
-        html.append("<div class=\"head\"><b>給料日ごと</b>")
-            .append("<form action=\"/summary\" method=\"get\"><select name=\"year\" onchange=\"this.form.submit()\">");
+        html.append("<div class=\"sec\"><span>給料日ごと</span>")
+            .append("<form action=\"/summary\" method=\"get\">")
+            .append("<select name=\"year\" aria-label=\"年\" onchange=\"this.form.submit()\">");
         for (int y : Salary.recordYears().descendingSet()) {
             html.append("<option value=\"").append(y).append("\"")
                 .append(y == year ? " selected" : "")
@@ -371,28 +376,26 @@ public class WebApp {
         }
         html.append("</select></form></div>");
 
-        html.append("<div class=\"list\">");
+        html.append("<div class=\"group\">");
         if (s.rows().isEmpty()) {
-            html.append("<div class=\"total\"><span class=\"muted\">この年の記録はありません</span></div>");
+            html.append("<div class=\"row\"><span class=\"muted\">この年の記録はありません</span></div>");
         }
         for (Salary.Row row : s.rows()) {
             PayPeriod p = row.period();
-            html.append("<a class=\"item\" href=\"/records?closing=").append(p.closingMonth()).append("\">")
-                .append("<div class=\"l\"><div class=\"d\">").append(p.paydayText()).append("</div>")
-                .append("<small>").append(p.rangeText()).append("</small></div>")
-                .append("<div class=\"r\">").append(String.format("%,d", row.total())).append("円")
-                .append("<small>").append(row.days()).append("日</small></div>")
-                .append("<span class=\"chev\">›</span></a>");
+            html.append("<a class=\"row\" href=\"/records?closing=").append(p.closingMonth()).append("\">")
+                .append("<span class=\"l\">").append(p.paydayText())
+                .append("<small>").append(p.rangeText()).append("・").append(row.days()).append("日</small></span>")
+                .append("<span class=\"r\">").append(yen(row.total())).append("<i class=\"chev\"></i></span></a>");
         }
         if (!s.rows().isEmpty()) {
-            html.append("<div class=\"total\"><span>").append(year).append("年の合計</span><span>")
-                .append(String.format("%,d", s.yearTotal())).append("円</span></div>");
+            html.append("<div class=\"row total\"><span>合計</span><span>")
+                .append(yen(s.yearTotal())).append("</span></div>");
         }
         html.append("</div>");
         send(exchange, html.toString());
     }
 
-    // 「次の給料日」と「今働いている期間」の金額を表示するHTML
+    // 「次の給料日」と、その日にもらえる金額を表示するHTML
     static String paydayInfoHtml() throws IOException {
         Settings settings = Settings.load();
         LocalDate today = LocalDate.now();
@@ -410,9 +413,9 @@ public class WebApp {
             }
         }
 
-        return "<div class=\"card\"><div class=\"label\">次の給料日　" + next.paydayText() + "</div>"
-             + "<div class=\"big\">" + String.format("%,d", total) + "円</div>"
-             + "<small>" + next.rangeText() + "の勤務分</small></div>";
+        return "<div class=\"sec\">次の給料日</div><div class=\"group\">"
+             + "<div class=\"row\"><span>" + next.paydayText() + "</span><span class=\"amount\">" + yen(total) + "</span></div>"
+             + "<div class=\"row\"><span>勤務分</span><span class=\"v\">" + next.rangeText() + "</span></div></div>";
     }
 
     // 「/punch」：タイムカード。ボタンが押されたら（POST）打刻して、今の状態を表示する
@@ -439,11 +442,13 @@ public class WebApp {
             Map<String, String> query = parseQuery(exchange.getRequestURI().getRawQuery());
             TimeCard.Punch p = TimeCard.load();
             if ("cancel".equals(query.get("confirm")) && p != null) {
-                send(exchange, "<h1>出勤の取り消し</h1>"
-                        + "<p>" + p.date() + " " + p.start() + " の出勤を取り消します。記録は残りません。よろしいですか？</p>"
+                send(exchange, "<a class=\"back\" href=\"/punch\">‹ タイムカード</a>"
+                        + "<h1>出勤の取り消し</h1>"
+                        + "<div class=\"sec\">この出勤を取り消します。記録は残りません。</div>"
+                        + "<div class=\"group\"><div class=\"row\"><span>出勤</span><span class=\"v\">"
+                        + p.date() + " " + p.start() + "</span></div></div>"
                         + "<form action=\"/punch\" method=\"post\" class=\"buttons\">"
-                        + "<button name=\"action\" value=\"cancel\" class=\"danger\">取り消す</button></form>"
-                        + "<p><a href=\"/punch\">やめる</a></p>");
+                        + "<button name=\"action\" value=\"cancel\" class=\"danger\">取り消す</button></form>");
                 return;
             }
         }
@@ -455,22 +460,23 @@ public class WebApp {
         }
         html.append("<form action=\"/punch\" method=\"post\" class=\"punch\">");
         if (p == null) {
-            html.append("<div class=\"status\">今は勤務していません</div>")
+            html.append("<div class=\"group\">").append(infoRow("状態", "勤務していません")).append("</div>")
                 .append("<div class=\"buttons\"><button name=\"action\" value=\"in\">出勤</button></div>");
         } else if (p.forgotClockOut()) {
             // 退勤の押し忘れ：退勤時刻を入力してもらう
-            html.append("<div class=\"status\">").append(p.date()).append(" ").append(p.start())
-                .append("に出勤したままです。<br>退勤時刻を入力してください。</div>")
-                .append("<label>退勤時刻<input type=\"time\" name=\"end\" required></label>")
+            html.append("<div class=\"group\"><div class=\"row warn\"><span>状態</span><span>退勤の押し忘れ</span></div>")
+                .append(infoRow("出勤", p.date() + " " + p.start()))
+                .append("<label class=\"row\"><span>退勤時刻</span><input type=\"time\" name=\"end\" required></label></div>")
                 .append("<div class=\"buttons\"><button name=\"action\" value=\"outAt\" class=\"out\">この時刻で退勤</button></div>");
         } else if (p.onBreak()) {
-            html.append("<div class=\"status\">休憩中（").append(p.breakStart()).append("〜）</div>")
+            html.append("<div class=\"group\">").append(infoRow("状態", "休憩中"))
+                .append(infoRow("出勤", p.start())).append(infoRow("休憩", p.breakStart() + "〜")).append("</div>")
                 .append("<div class=\"buttons\"><button name=\"action\" value=\"breakEnd\" class=\"break\">休憩終了</button>")
                 .append("<button name=\"action\" value=\"out\" class=\"out\">退勤</button></div>");
         } else {
-            html.append("<div class=\"status\">勤務中（").append(p.start()).append("〜）");
+            html.append("<div class=\"group\">").append(infoRow("状態", "勤務中")).append(infoRow("出勤", p.start()));
             if (p.breakTaken()) {
-                html.append("<br>休憩: ").append(p.breakStart()).append("〜").append(p.breakEnd());
+                html.append(infoRow("休憩", p.breakStart() + "〜" + p.breakEnd()));
             }
             html.append("</div><div class=\"buttons\">");
             if (!p.breakTaken()) {
@@ -484,6 +490,11 @@ public class WebApp {
             html.append("<p class=\"sub\"><a href=\"/punch?confirm=cancel\">出勤を取り消す</a></p>");
         }
         send(exchange, html.toString());
+    }
+
+    // 「左に項目名、右に値」の1行
+    static String infoRow(String label, String value) {
+        return "<div class=\"row\"><span>" + label + "</span><span class=\"v\">" + value + "</span></div>";
     }
 
     // ---- 記録の一覧・修正・削除 ----
@@ -502,13 +513,14 @@ public class WebApp {
     }
 
     // 「closing月締めの期間」の記録一覧のHTMLを作る（message は上に出すお知らせ）
+    // 行をタップすると修正画面へ（削除は修正画面の一番下から）
     static String recordsHtml(YearMonth closing, String message) throws IOException {
         PayPeriod period = PayPeriod.ofClosingMonth(closing, Settings.load());
         StringBuilder html = new StringBuilder();
+        html.append("<a class=\"back\" href=\"/summary?year=").append(period.payday().getYear()).append("\">‹ 集計</a>");
         html.append("<h1>").append(period.paydayText()).append("支給分</h1>");
-        html.append("<p>働いた期間：").append(period.start()).append("〜").append(period.end()).append("</p>");
         html.append(message);
-        html.append("<div class=\"table-wrap\"><table><tr><th>日付</th><th>勤務</th><th class=\"num\">給料</th><th></th></tr>");
+        html.append("<div class=\"sec\">").append(period.rangeText()).append(" の勤務</div><div class=\"group\">");
         int count = 0;
         long sum = 0;
         // 日付の順に並べて表示する（行番号はそのまま持っておく）
@@ -520,28 +532,22 @@ public class WebApp {
             }
             count++;
             sum += e.total();
-            String ids = "line=" + e.index() + "&check=" + e.check();
-            html.append("<tr><td>").append(e.date().getMonthValue()).append("/").append(e.date().getDayOfMonth())
-                .append("</td><td><span class=\"nw\">").append(escape(e.start())).append("〜")
-                .append(escape(e.end())).append("</span>");
+            html.append("<a class=\"row\" href=\"/edit?").append(ids(e)).append("\"><span class=\"l\">")
+                .append(e.date().getMonthValue()).append("/").append(e.date().getDayOfMonth()).append("　")
+                .append(escape(e.start())).append("〜").append(escape(e.end())).append("<small>");
             if (e.breakMinutes() > 0) {
-                html.append("<br><small><span class=\"nw\">休憩").append(e.breakMinutes()).append("分</span>・")
-                    .append("<span class=\"nw\">時給").append(e.wage()).append("円</span></small>");
-            } else {
-                html.append("<br><small><span class=\"nw\">時給").append(e.wage()).append("円</span></small>");
+                html.append("休憩").append(e.breakMinutes()).append("分・");
             }
-            html.append("</td><td class=\"num\">").append(String.format("%,d", e.total())).append("円</td>")
-                .append("<td class=\"ops\"><a href=\"/edit?").append(ids).append("\">修正</a>")
-                .append("<a href=\"/delete?").append(ids).append("\">削除</a></td></tr>");
+            html.append("時給").append(e.wage()).append("円</small></span>")
+                .append("<span class=\"r\">").append(yen(e.total())).append("<i class=\"chev\"></i></span></a>");
         }
-        html.append("</table></div>");
         if (count == 0) {
-            html.append("<p>この月の記録はありません。</p>");
+            html.append("<div class=\"row\"><span class=\"muted\">この期間の記録はありません</span></div>");
         } else {
-            html.append("<div class=\"result\">").append(count).append("日勤務・合計 <strong>")
-                .append(String.format("%,d", sum)).append("円</strong></div>");
+            html.append("<div class=\"row total\"><span>").append(count).append("日勤務</span><span>")
+                .append(yen(sum)).append("</span></div>");
         }
-        html.append("<p><a href=\"/summary?year=").append(period.payday().getYear()).append("\">← 集計に戻る</a></p>");
+        html.append("</div>");
         return html.toString();
     }
 
@@ -561,14 +567,15 @@ public class WebApp {
 
         if (!isPost) {
             // 確認画面（ここではまだ削除しない）
-            send(exchange, "<h1>記録の削除</h1>"
-                    + "<p>次の記録を削除します。よろしいですか？</p>"
-                    + "<div class=\"status\">" + e.date() + "　" + escape(e.start()) + "〜" + escape(e.end())
-                    + "<br>" + String.format("%,d", e.total()) + "円</div>"
+            send(exchange, "<a class=\"back\" href=\"/edit?" + ids(e) + "\">‹ 修正</a>"
+                    + "<h1>記録の削除</h1>"
+                    + "<div class=\"sec\">次の記録を削除します。よろしいですか？</div>"
+                    + "<div class=\"group\">" + infoRow("日付", e.date().toString())
+                    + infoRow("時間", escape(e.start()) + "〜" + escape(e.end()))
+                    + infoRow("給料", yen(e.total())) + "</div>"
                     + "<form action=\"/delete\" method=\"post\" class=\"buttons\">"
                     + hidden(e)
-                    + "<button type=\"submit\" class=\"danger\">削除する</button></form>"
-                    + "<p><a href=\"/records?closing=" + closing + "\">やめる</a></p>");
+                    + "<button type=\"submit\" class=\"danger\">削除する</button></form>");
             return;
         }
 
@@ -579,21 +586,26 @@ public class WebApp {
         }
     }
 
-    // 修正フォーム（%s のところに入力欄の値などが入る）
+    // 修正フォーム（%s のところに戻り先・入力欄の値などが入る）
     static final String EDIT_FORM = """
+        <a class="back" href="/records?closing=%s">‹ 一覧</a>
         <h1>記録の修正</h1>
         %s
-        <form action="/edit" method="post" class="card">
+        <form action="/edit" method="post">
           %s
-          <label>日付<input type="date" name="date" value="%s" required></label>
-          <label>時給（円）<input type="number" name="wage" value="%s" min="1" max="100000" required></label>
-          <label>開始時刻<input type="time" name="start" value="%s" required></label>
-          <label>終了時刻<input type="time" name="end" value="%s" required></label>
-          <label>休憩（分）<input type="number" name="break" value="%s" min="0"></label>
-          <label>休憩の開始時刻（休憩がある場合）<input type="time" name="breakStart" value="%s"></label>
+          <div class="group">
+            <label class="row"><span>日付</span><input type="date" name="date" value="%s" required></label>
+            <label class="row"><span>時給（円）</span><input type="number" name="wage" value="%s" min="1" max="100000" inputmode="numeric" required></label>
+            <label class="row"><span>開始</span><input type="time" name="start" value="%s" required></label>
+            <label class="row"><span>終了</span><input type="time" name="end" value="%s" required></label>
+          </div>
+          <div class="group">
+            <label class="row"><span>休憩（分）</span><input type="number" name="break" value="%s" min="0" inputmode="numeric"></label>
+            <label class="row"><span>休憩の開始</span><input type="time" name="breakStart" value="%s"></label>
+          </div>
           <div class="buttons"><button type="submit">保存する</button></div>
         </form>
-        <p><a href="/records?closing=%s">やめる</a></p>
+        <div class="group"><a class="rowbtn" href="/delete?%s">この記録を削除</a></div>
         """;
 
     // 「/edit」：GETなら今の内容が入った修正フォーム、POSTなら計算し直して保存する
@@ -612,9 +624,9 @@ public class WebApp {
         if (!isPost) {
             // 休憩がない記録は、休憩の開始時刻の欄を空にしておく
             String breakStart = e.breakMinutes() > 0 ? e.breakStart() : "";
-            send(exchange, String.format(EDIT_FORM, "", hidden(e),
+            send(exchange, String.format(EDIT_FORM, closingMonth(e.date()), "", hidden(e),
                     e.date(), e.wage(), escape(e.start()), escape(e.end()),
-                    e.breakMinutes(), escape(breakStart), closingMonth(e.date())));
+                    e.breakMinutes(), escape(breakStart), ids(e)));
             return;
         }
 
@@ -630,18 +642,18 @@ public class WebApp {
                     breakMinutes(params), breakStart(params), r.total());
             if (Salary.replaceLine(e.index(), e.check(), newLine)) {
                 send(exchange, recordsHtml(closingMonth(date),
-                        "<p class=\"result\">記録を修正しました（" + String.format("%,d", r.total()) + "円）。</p>"));
+                        "<p class=\"result\">記録を修正しました（" + yen(r.total()) + "）。</p>"));
             } else {
                 send(exchange, notFoundHtml());
             }
         } catch (RuntimeException ex) {
             // 入力がおかしいときは、入力した内容のままフォームを出し直す
-            send(exchange, String.format(EDIT_FORM,
+            send(exchange, String.format(EDIT_FORM, closingMonth(e.date()),
                     "<p class=\"error\">" + errorText(ex, "入力内容を確認してください。") + "</p>", hidden(e),
                     escape(params.getOrDefault("date", "")), escape(params.getOrDefault("wage", "")),
                     escape(params.getOrDefault("start", "")), escape(params.getOrDefault("end", "")),
                     escape(params.getOrDefault("break", "0")), escape(params.getOrDefault("breakStart", "")),
-                    closingMonth(e.date())));
+                    ids(e)));
         }
     }
 
@@ -665,11 +677,16 @@ public class WebApp {
              + "<input type=\"hidden\" name=\"check\" value=\"" + e.check() + "\">";
     }
 
+    // どの記録かをアドレスで伝えるための「line=3&check=abcd」
+    static String ids(Salary.Entry e) {
+        return "line=" + e.index() + "&check=" + e.check();
+    }
+
     static String notFoundHtml() {
-        return "<h1>記録が見つかりません</h1>"
+        return "<a class=\"back\" href=\"/summary\">‹ 集計</a>"
+             + "<h1>記録が見つかりません</h1>"
              + "<p class=\"error\">記録が見つからないか、ほかの画面で変更されています。"
-             + "もう一度、一覧から選び直してください。</p>"
-             + "<p><a href=\"/summary\">集計に戻る</a></p>";
+             + "もう一度、一覧から選び直してください。</p>";
     }
 
     // ---- 設定 ----
@@ -701,22 +718,25 @@ public class WebApp {
         }
 
         send(exchange, "<h1>設定</h1>" + message
-                + "<form action=\"/settings\" method=\"post\" class=\"card\">"
-                + "<label>時給（円）<input type=\"number\" name=\"wage\" value=\"" + s.wage() + "\" min=\"1\" required></label>"
-                + "<p><small>時給を変えても、これまでの記録の給料は変わりません。</small></p>"
-                + "<label>締め日<select name=\"closingDay\">" + dayOptions(s.closingDay()) + "</select></label>"
-                + "<label>給料日</label><div class=\"buttons\" style=\"margin-top:0\">"
-                + "<select name=\"paydayMonth\">"
+                + "<form action=\"/settings\" method=\"post\">"
+                + "<div class=\"group\"><label class=\"row\"><span>時給（円）</span><input type=\"number\" name=\"wage\" value=\""
+                + s.wage() + "\" min=\"1\" inputmode=\"numeric\" required></label></div>"
+                + "<p class=\"foot\">時給を変えても、これまでの記録の給料は変わりません。</p>"
+                + "<div class=\"group\">"
+                + "<label class=\"row\"><span>締め日</span><select name=\"closingDay\">" + dayOptions(s.closingDay()) + "</select></label>"
+                + "<div class=\"row\"><span>給料日</span><span class=\"two\">"
+                + "<select name=\"paydayMonth\" aria-label=\"給料日の月\">"
                 + "<option value=\"0\"" + (s.paydayMonth() == 0 ? " selected" : "") + ">当月</option>"
                 + "<option value=\"1\"" + (s.paydayMonth() == 1 ? " selected" : "") + ">翌月</option></select>"
-                + "<select name=\"paydayDay\">" + dayOptions(s.paydayDay()) + "</select></div>"
-                + "<p><small>土日・祝日の場合は、前の平日になります。</small></p>"
-                + "<label>扶養ライン（円）<input type=\"number\" name=\"fuyouLimit\" value=\"" + s.fuyouLimit()
-                + "\" min=\"0\" step=\"10000\" required></label>"
+                + "<select name=\"paydayDay\" aria-label=\"給料日の日\">" + dayOptions(s.paydayDay()) + "</select></span></div>"
+                + "</div>"
+                + "<p class=\"foot\">土日・祝日の場合は、前の平日になります。</p>"
+                + "<div class=\"group\"><label class=\"row\"><span>扶養ライン（円）</span><input type=\"number\" name=\"fuyouLimit\" value=\""
+                + s.fuyouLimit() + "\" min=\"0\" step=\"10000\" inputmode=\"numeric\" required></label></div>"
                 + "<div class=\"buttons\"><button type=\"submit\">保存する</button></div>"
                 + "</form>"
-                + "<form action=\"/logout\" method=\"post\" class=\"buttons\" style=\"margin-top:28px\">"
-                + "<button type=\"submit\" class=\"logout\">ログアウト</button></form>");
+                + "<form action=\"/logout\" method=\"post\" class=\"group\">"
+                + "<button type=\"submit\" class=\"rowbtn\">ログアウト</button></form>");
     }
 
     // 「1日」〜「28日」と「末日」の選択肢（selected の日を選んだ状態にする）
@@ -751,23 +771,27 @@ public class WebApp {
         return e instanceof Salary.InputException ? escape(e.getMessage()) : fallback;
     }
 
-    // 計算結果（合計と内訳の表）のHTMLを作る
+    // 金額を「12,345円」の形にする
+    static String yen(long amount) {
+        return String.format("%,d円", amount);
+    }
+
+    // 計算結果（合計と内訳）のHTMLを作る
     static String resultHtml(Map<String, String> params, Salary.PayResult r) {
-        return "<div class=\"result\">" + escape(params.get("start")) + "〜" + escape(params.get("end"))
-             + " の給料は <strong>" + String.format("%,d", r.total()) + "円</strong> です</div>"
-             + "<div class=\"table-wrap\"><table>"
-             + "<tr><th>区分</th><th>時間</th><th class=\"num\">金額</th></tr>"
+        return "<div class=\"sec\">計算結果</div><div class=\"group\">"
+             + "<div class=\"row\"><span>" + escape(params.get("start")) + "〜" + escape(params.get("end"))
+             + "</span><span class=\"amount\">" + yen(r.total()) + "</span></div>"
              + row("通常", r.normalMinutes(), r.normalPay())
              + row("深夜（×1.25）", r.nightMinutes(), r.nightPay())
              + row("残業（×1.25）", r.overtimeMinutes(), r.overtimePay())
              + row("深夜残業（×1.50）", r.overtimeNightMinutes(), r.overtimeNightPay())
-             + "</table></div>";
+             + "</div>";
     }
 
-    // 内訳の表の1行分のHTMLを作る
+    // 内訳の1行分のHTMLを作る（左に区分と時間、右に金額）
     static String row(String label, int minutes, long pay) {
-        return "<tr><td>" + label + "</td><td>" + Salary.format(minutes)
-             + "</td><td class=\"num\">" + String.format("%,d", pay) + "円</td></tr>";
+        return "<div class=\"row\"><span class=\"l\">" + label + "<small>" + Salary.format(minutes)
+             + "</small></span><span class=\"v\">" + yen(pay) + "</span></div>";
     }
 
     // ページの中身を共通の枠（メニュー付き）に入れて、ブラウザに送る
