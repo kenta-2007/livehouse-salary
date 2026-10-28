@@ -326,27 +326,20 @@ public class WebApp {
         PayPeriod current = PayPeriod.of(today, settings);
         PayPeriod previous = PayPeriod.ofClosingMonth(current.closingMonth().minusMonths(1), settings);
 
-        long previousTotal = 0;
-        long currentTotal = 0;
+        // 締めが終わったけど、まだ給料日が来ていない分があれば、それが「次の給料日」。
+        // もう支給済みなら、今働いている期間の給料日が「次の給料日」
+        PayPeriod next = previous.payday().isBefore(today) ? current : previous;
+
+        long total = 0;
         for (Salary.Entry e : Salary.loadEntries()) {
-            if (previous.contains(e.date())) {
-                previousTotal += e.total();
-            } else if (current.contains(e.date())) {
-                currentTotal += e.total();
+            if (next.contains(e.date())) {
+                total += e.total();
             }
         }
 
-        StringBuilder html = new StringBuilder("<div class=\"status\">");
-        // 締めが終わったけど、まだ給料日が来ていない分があれば、それが「次の給料日」
-        if (!previous.payday().isBefore(today)) {
-            html.append("次の給料日 <strong>").append(previous.paydayText()).append("</strong><br>")
-                .append("<strong>").append(String.format("%,d", previousTotal)).append("円</strong>")
-                .append("<br><small>").append(previous.rangeText()).append("の勤務分</small><hr>");
-        }
-        html.append("今の期間（").append(current.rangeText()).append("）<br><strong>")
-            .append(String.format("%,d", currentTotal)).append("円</strong>")
-            .append("<br><small>").append(current.paydayText()).append("に支給予定</small></div>");
-        return html.toString();
+        return "<div class=\"status\">次の給料日 <strong>" + next.paydayText() + "</strong><br>"
+             + "<strong>" + String.format("%,d", total) + "円</strong>"
+             + "<br><small>" + next.rangeText() + "の勤務分</small></div>";
     }
 
     // 「/punch」：タイムカード。ボタンが押されたら（POST）打刻して、今の状態を表示する
