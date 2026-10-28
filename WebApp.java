@@ -30,13 +30,22 @@ public class WebApp {
         <html lang="ja">
         <head>
           <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
           <title>給料計算</title>
           <style>
             html, body { overflow-x: hidden; }
-            body { font-family: sans-serif; max-width: 460px; margin: 24px auto; padding: 0 16px; }
-            nav { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 8px; }
-            nav a, nav button { white-space: nowrap; }
+            body { font-family: sans-serif; max-width: 460px; margin: 8px auto 0; padding: 0 16px;
+                   /* 下のメニューに中身が隠れないように、下に余白をとる */
+                   padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+            /* 画面の下に固定するメニュー（スマホアプリのタブのような形） */
+            nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: flex;
+                  background: #fafafa; border-top: 1px solid #dde;
+                  padding: 6px 0 calc(8px + env(safe-area-inset-bottom)); }
+            nav a { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+                    font-size: 11px; color: #8a8f98; text-decoration: none; white-space: nowrap; }
+            nav svg { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 2;
+                      stroke-linecap: round; stroke-linejoin: round; }
+            nav a.on { color: #1a7f6b; font-weight: bold; }
             label { display: block; margin-top: 12px; }
             input, select { width: 100%%; max-width: 100%%; min-width: 0; padding: 8px; font-size: 16px; box-sizing: border-box; }
             /* iPhoneでは日付・時刻の入力欄が画面からはみ出すことがあるので、幅を固定する */
@@ -59,12 +68,11 @@ public class WebApp {
             .sub a { color: #889; }
             .status { margin-top: 12px; padding: 16px; border: 2px solid #8aa; border-radius: 8px; font-size: 18px; }
             .punch button { padding: 20px; font-size: 18px; }
-            button.link { padding: 0; font-size: 14px; background: none; border: none; color: #06c; text-decoration: underline; cursor: pointer; }
+            .logout { background: none; border: 1px solid #ccd; border-radius: 8px; color: #555; }
           </style>
         </head>
         <body>
-          <nav><a href="/punch">タイムカード</a><a href="/">計算・記録</a><a href="/summary">集計</a><a href="/settings">設定</a>
-            <form action="/logout" method="post" style="margin-left:auto"><button class="link">ログアウト</button></form></nav>
+          %s
           %s
         </body>
         </html>
@@ -641,7 +649,9 @@ public class WebApp {
                 + "<label>扶養ライン（円）<input type=\"number\" name=\"fuyouLimit\" value=\"" + s.fuyouLimit()
                 + "\" min=\"0\" step=\"10000\" required></label>"
                 + "<div class=\"buttons\"><button type=\"submit\">保存する</button></div>"
-                + "</form>");
+                + "</form>"
+                + "<form action=\"/logout\" method=\"post\" class=\"buttons\" style=\"margin-top:40px\">"
+                + "<button type=\"submit\" class=\"logout\">ログアウト</button></form>");
     }
 
     // 「1日」〜「28日」と「末日」の選択肢（selected の日を選んだ状態にする）
@@ -697,12 +707,41 @@ public class WebApp {
 
     // ページの中身を共通の枠（メニュー付き）に入れて、ブラウザに送る
     static void send(HttpExchange exchange, String content) throws IOException {
-        sendHtml(exchange, String.format(LAYOUT, content));
+        sendHtml(exchange, String.format(LAYOUT, content, navHtml(exchange.getRequestURI().getPath())));
     }
 
     // ログイン画面用（メニューなし）
     static void sendPage(HttpExchange exchange, String content) throws IOException {
-        sendHtml(exchange, String.format(LAYOUT, content).replaceAll("(?s)<nav>.*?</nav>", ""));
+        sendHtml(exchange, String.format(LAYOUT, content, ""));
+    }
+
+    // 下のメニューのHTMLを作る。今開いているページのタブを緑色にする
+    static String navHtml(String path) {
+        // ページのアドレスから、どのタブのページかを決める
+        String active = switch (path) {
+            case "/punch" -> "punch";
+            case "/summary", "/records", "/edit", "/delete" -> "summary";
+            case "/settings" -> "settings";
+            default -> "calc";  // 「/」と「/record」
+        };
+        return "<nav>"
+             + tab("/punch", "タイムカード", active.equals("punch"),
+                   "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 7v5l3 2\"/>")
+             + tab("/", "計算・記録", active.equals("calc"),
+                   "<rect x=\"5\" y=\"3\" width=\"14\" height=\"18\" rx=\"2\"/>"
+                   + "<path d=\"M8 7h8M8 11h2M12 11h2M8 15h2M12 15h2\"/>")
+             + tab("/summary", "集計", active.equals("summary"),
+                   "<path d=\"M4 20V10M10 20V4M16 20v-7M22 20H2\"/>")
+             + tab("/settings", "設定", active.equals("settings"),
+                   "<circle cx=\"12\" cy=\"12\" r=\"3\"/>"
+                   + "<path d=\"M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2\"/>")
+             + "</nav>";
+    }
+
+    // タブ1つ分（アイコン＋文字）
+    static String tab(String href, String label, boolean on, String icon) {
+        return "<a href=\"" + href + "\"" + (on ? " class=\"on\" aria-current=\"page\"" : "") + ">"
+             + "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\">" + icon + "</svg>" + label + "</a>";
     }
 
     static void sendHtml(HttpExchange exchange, String html) throws IOException {
