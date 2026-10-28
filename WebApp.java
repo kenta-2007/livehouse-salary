@@ -317,8 +317,8 @@ public class WebApp {
             html.append("<p>あと <strong>").append(String.format("%,d", s.remaining()))
                 .append("円</strong> まで働けます</p>");
             if (s.forecast() >= 0) {
-                html.append("<p>今のペースだと、").append(year).append("年の支給額の見込みは ")
-                    .append(String.format("%,d", s.forecast())).append("円 です</p>");
+                html.append("<p>").append(year).append("年の支給額の見込み: ")
+                    .append(String.format("%,d", s.forecast())).append("円</p>");
                 if (s.forecast() > s.fuyouLimit()) {
                     html.append("<p class=\"warn\">⚠ このペースだと扶養ラインを超えそうです。シフトを調整しましょう。</p>");
                 }
@@ -440,7 +440,7 @@ public class WebApp {
     static String recordsHtml(YearMonth closing, String message) throws IOException {
         PayPeriod period = PayPeriod.ofClosingMonth(closing, Settings.load());
         StringBuilder html = new StringBuilder();
-        html.append("<h1>").append(period.paydayText()).append("支給分の記録</h1>");
+        html.append("<h1>").append(period.paydayText()).append("支給分</h1>");
         html.append("<p>働いた期間：").append(period.start()).append("〜").append(period.end()).append("</p>");
         html.append(message);
         html.append("<div class=\"table-wrap\"><table><tr><th>日付</th><th>勤務</th><th class=\"num\">給料</th><th></th></tr>");
