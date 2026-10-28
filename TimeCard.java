@@ -51,7 +51,6 @@ public class TimeCard {
             return "すでに出勤中です。";
         }
         save(new Punch(LocalDate.now(clock).toString(), wage, now(), "", ""));
-        Salary.saveWage(wage);  // 次からの初期値にする
         return now() + " に出勤しました。";
     }
 

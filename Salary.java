@@ -3,6 +3,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,13 +21,7 @@ public class Salary {
     // 勤務記録を保存するファイル
     static final String RECORD_FILE = "records.csv";
 
-    // 扶養ライン（年収の上限）。自分の家庭の条件に合わせて変えてください
-    static final long FUYOU_LIMIT = 1_500_000;
-
-    // 最後に使った時給を保存するファイル
-    static final String WAGE_FILE = "wage.txt";
-    // 時給がまだ保存されていないときの初期値
-    static final int DEFAULT_WAGE = 1200;
+    // 時給・締め日・扶養ラインは、設定画面で変えられる（Settings.java）
 
     // "18:30" のような時刻を、0時からの「分」に変換する
     static int toMinutes(String time) {
@@ -251,79 +246,67 @@ public class Salary {
         return true;
     }
 
-    // 最後に使った時給を読み込む（保存されていなければ初期値）
-    static int loadWage() {
-        try {
-            return Integer.parseInt(Files.readString(Path.of(WAGE_FILE)).trim());
-        } catch (IOException | NumberFormatException e) {
-            return DEFAULT_WAGE;
-        }
-    }
-
-    // 時給を保存する（次からの初期値になる）
-    static void saveWage(int wage) throws IOException {
-        Files.writeString(Path.of(WAGE_FILE), String.valueOf(wage));
-    }
-
-    // 記録がある年の一覧（今年も必ず含める）を、古い順に返す
+    // 記録がある「給料をもらった年」の一覧（今年も必ず含める）を、古い順に返す
     static TreeSet<Integer> recordYears() throws IOException {
+        int closingDay = Settings.load().closingDay();
         TreeSet<Integer> years = new TreeSet<>();
         years.add(LocalDate.now().getYear());
-        Path path = Path.of(RECORD_FILE);
-        if (Files.exists(path)) {
-            for (String line : Files.readAllLines(path)) {
-                if (!line.isBlank()) {
-                    years.add(LocalDate.parse(line.split(",")[0]).getYear());
-                }
-            }
+        for (Entry e : loadEntries()) {
+            years.add(PayPeriod.of(e.date(), closingDay).payday().getYear());
         }
         return years;
     }
 
     // 1年分の集計結果をまとめて入れておく「入れ物」
-    record Summary(int year, long[] monthTotal, int[] monthDays, long yearTotal) {
+    // monthTotal[m] などは、その年の m 月に「支給される」分（m 月の給料日にもらえる分）
+    record Summary(int year, long[] monthTotal, int[] monthDays, PayPeriod[] periods,
+                   long yearTotal, long fuyouLimit, int closingDay) {
         // 扶養ラインまでの残り（マイナスなら超えている）
         long remaining() {
-            return FUYOU_LIMIT - yearTotal;
+            return fuyouLimit - yearTotal;
         }
 
-        // 今年なら、今のペースで12月まで働いた場合の年収見込み。今年でなければ -1
+        // 今年なら、今のペースで12月支給分まで働いた場合の年収見込み。今年でなければ -1
         long forecast() {
             LocalDate today = LocalDate.now();
             if (year != today.getYear()) {
                 return -1;
             }
-            return yearTotal * 12 / today.getMonthValue();
+            // 今日働いた分が何月に支給されるか（＝その月までの分を、すでに働いたことになる）
+            PayPeriod now = PayPeriod.of(today, closingDay);
+            if (now.payday().getYear() != year) {
+                return yearTotal;  // 12月支給分の期間が終わっていれば、年収はもう確定
+            }
+            return yearTotal * 12 / now.payday().getMonthValue();
         }
     }
 
-    // 記録ファイルを読み込んで、指定した年の月ごと・年間の合計を計算する（コンソール版・Web版で共通）
+    // 記録を読み込んで、指定した年に「支給される」給料を、支給月ごとに集計する（コンソール版・Web版で共通）
+    // 扶養は「給料をもらった日」で年を数えるので、働いた日ではなく給料日で年を分ける
     static Summary summarize(int year) throws IOException {
-        long[] monthTotal = new long[13];  // monthTotal[1]〜[12] に各月の合計を入れる
-        int[] monthDays = new int[13];     // 各月の勤務日数
+        Settings settings = Settings.load();
+        long[] monthTotal = new long[13];  // monthTotal[1]〜[12] に、各月の給料日に支給される合計を入れる
+        int[] monthDays = new int[13];     // 各月の支給分の勤務日数
+        PayPeriod[] periods = new PayPeriod[13];
+        for (int m = 1; m <= 12; m++) {
+            periods[m] = PayPeriod.ofClosingMonth(YearMonth.of(year, m), settings.closingDay());
+        }
 
-        Path path = Path.of(RECORD_FILE);
-        if (Files.exists(path)) {
-            for (String line : Files.readAllLines(path)) {
-                if (line.isBlank()) {
-                    continue;  // 空行は飛ばす
-                }
-                // 日付,時給,開始,終了,休憩,休憩開始,給料
-                String[] cols = line.split(",");
-                LocalDate date = LocalDate.parse(cols[0]);
-                if (date.getYear() != year) {
-                    continue;  // 違う年の記録は飛ばす
-                }
-                monthTotal[date.getMonthValue()] += Long.parseLong(cols[6]);
-                monthDays[date.getMonthValue()]++;
+        for (Entry e : loadEntries()) {
+            LocalDate payday = PayPeriod.of(e.date(), settings.closingDay()).payday();
+            if (payday.getYear() != year) {
+                continue;  // ほかの年に支給される分は飛ばす
             }
+            monthTotal[payday.getMonthValue()] += e.total();
+            monthDays[payday.getMonthValue()]++;
         }
 
         long yearTotal = 0;
         for (int m = 1; m <= 12; m++) {
             yearTotal += monthTotal[m];
         }
-        return new Summary(year, monthTotal, monthDays, yearTotal);
+        return new Summary(year, monthTotal, monthDays, periods, yearTotal,
+                settings.fuyouLimit(), settings.closingDay());
     }
 
     // 集計をコンソールに表示する
@@ -340,14 +323,15 @@ public class Salary {
         }
 
         System.out.println();
-        System.out.println("==== " + year + "年の集計 ====");
+        System.out.println("==== " + year + "年に支給される給料の集計 ====");
         for (int m = 1; m <= 12; m++) {
             if (s.monthDays()[m] > 0) {
-                System.out.printf("%2d月: %2d日勤務  %,9d円%n", m, s.monthDays()[m], s.monthTotal()[m]);
+                System.out.printf("%2d月支給（%s）: %2d日勤務  %,9d円%n",
+                        m, s.periods()[m].rangeText(), s.monthDays()[m], s.monthTotal()[m]);
             }
         }
         System.out.printf("年間合計: %,d円%n", s.yearTotal());
-        System.out.printf("扶養ライン: %,d円%n", FUYOU_LIMIT);
+        System.out.printf("扶養ライン: %,d円%n", s.fuyouLimit());
         if (s.remaining() < 0) {
             System.out.printf("⚠ 扶養ラインを %,d円 超えています！%n", -s.remaining());
             return;
@@ -355,7 +339,7 @@ public class Salary {
         System.out.printf("あと %,d円 まで働けます%n", s.remaining());
         if (s.forecast() >= 0) {
             System.out.printf("今のペースだと年収の見込みは %,d円 です%n", s.forecast());
-            if (s.forecast() > FUYOU_LIMIT) {
+            if (s.forecast() > s.fuyouLimit()) {
                 System.out.println("⚠ このペースだと扶養ラインを超えそうです。シフトを調整しましょう。");
             }
         }
