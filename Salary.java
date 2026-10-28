@@ -248,65 +248,71 @@ public class Salary {
 
     // 記録がある「給料をもらった年」の一覧（今年も必ず含める）を、古い順に返す
     static TreeSet<Integer> recordYears() throws IOException {
-        int closingDay = Settings.load().closingDay();
+        Settings settings = Settings.load();
         TreeSet<Integer> years = new TreeSet<>();
         years.add(LocalDate.now().getYear());
         for (Entry e : loadEntries()) {
-            years.add(PayPeriod.of(e.date(), closingDay).payday().getYear());
+            years.add(PayPeriod.of(e.date(), settings).payday().getYear());
         }
         return years;
     }
 
+    // 集計の1行分（1回の給料日の分）
+    record Row(PayPeriod period, int days, long total) {
+    }
+
     // 1年分の集計結果をまとめて入れておく「入れ物」
-    // monthTotal[m] などは、その年の m 月に「支給される」分（m 月の給料日にもらえる分）
-    record Summary(int year, long[] monthTotal, int[] monthDays, PayPeriod[] periods,
-                   long yearTotal, long fuyouLimit, int closingDay) {
+    // rows には、その年に「支給される」給料が、給料日の順に入る
+    record Summary(int year, List<Row> rows, long yearTotal, long fuyouLimit, Settings settings) {
         // 扶養ラインまでの残り（マイナスなら超えている）
         long remaining() {
             return fuyouLimit - yearTotal;
         }
 
-        // 今年なら、今のペースで12月支給分まで働いた場合の年収見込み。今年でなければ -1
+        // 今年なら、今のペースで年末まで働いた場合の支給額の見込み。今年でなければ -1
         long forecast() {
             LocalDate today = LocalDate.now();
             if (year != today.getYear()) {
                 return -1;
             }
-            // 今日働いた分が何月に支給されるか（＝その月までの分を、すでに働いたことになる）
-            PayPeriod now = PayPeriod.of(today, closingDay);
-            if (now.payday().getYear() != year) {
-                return yearTotal;  // 12月支給分の期間が終わっていれば、年収はもう確定
+            // 今日働いた分が何月に支給されるか（＝その月の支給分までは、もう働いたことになる）
+            LocalDate payday = PayPeriod.of(today, settings).payday();
+            if (payday.getYear() != year) {
+                return yearTotal;  // 今年最後の給料日の分まで働き終わっていれば、もう確定
             }
-            return yearTotal * 12 / now.payday().getMonthValue();
+            return yearTotal * 12 / payday.getMonthValue();
         }
     }
 
-    // 記録を読み込んで、指定した年に「支給される」給料を、支給月ごとに集計する（コンソール版・Web版で共通）
+    // 記録を読み込んで、指定した年に「支給される」給料を、給料日ごとに集計する（コンソール版・Web版で共通）
     // 扶養は「給料をもらった日」で年を数えるので、働いた日ではなく給料日で年を分ける
     static Summary summarize(int year) throws IOException {
         Settings settings = Settings.load();
-        long[] monthTotal = new long[13];  // monthTotal[1]〜[12] に、各月の給料日に支給される合計を入れる
-        int[] monthDays = new int[13];     // 各月の支給分の勤務日数
-        PayPeriod[] periods = new PayPeriod[13];
-        for (int m = 1; m <= 12; m++) {
-            periods[m] = PayPeriod.ofClosingMonth(YearMonth.of(year, m), settings.closingDay());
-        }
-
-        for (Entry e : loadEntries()) {
-            LocalDate payday = PayPeriod.of(e.date(), settings.closingDay()).payday();
-            if (payday.getYear() != year) {
-                continue;  // ほかの年に支給される分は飛ばす
-            }
-            monthTotal[payday.getMonthValue()] += e.total();
-            monthDays[payday.getMonthValue()]++;
-        }
-
+        List<Entry> entries = loadEntries();
+        List<Row> rows = new ArrayList<>();
         long yearTotal = 0;
-        for (int m = 1; m <= 12; m++) {
-            yearTotal += monthTotal[m];
+
+        // 前の年の10月締め〜今年の12月締めの中から、給料日がこの年になるものを探す
+        YearMonth closing = YearMonth.of(year - 1, 10);
+        while (!closing.isAfter(YearMonth.of(year, 12))) {
+            PayPeriod period = PayPeriod.ofClosingMonth(closing, settings);
+            if (period.payday().getYear() == year) {
+                int days = 0;
+                long total = 0;
+                for (Entry e : entries) {
+                    if (period.contains(e.date())) {
+                        days++;
+                        total += e.total();
+                    }
+                }
+                if (days > 0) {
+                    rows.add(new Row(period, days, total));
+                    yearTotal += total;
+                }
+            }
+            closing = closing.plusMonths(1);
         }
-        return new Summary(year, monthTotal, monthDays, periods, yearTotal,
-                settings.fuyouLimit(), settings.closingDay());
+        return new Summary(year, rows, yearTotal, settings.fuyouLimit(), settings);
     }
 
     // 集計をコンソールに表示する
@@ -324,11 +330,9 @@ public class Salary {
 
         System.out.println();
         System.out.println("==== " + year + "年に支給される給料の集計 ====");
-        for (int m = 1; m <= 12; m++) {
-            if (s.monthDays()[m] > 0) {
-                System.out.printf("%2d月支給（%s）: %2d日勤務  %,9d円%n",
-                        m, s.periods()[m].rangeText(), s.monthDays()[m], s.monthTotal()[m]);
-            }
+        for (Row r : s.rows()) {
+            System.out.printf("%s支給（%s）: %2d日勤務  %,9d円%n",
+                    r.period().paydayText(), r.period().rangeText(), r.days(), r.total());
         }
         System.out.printf("年間合計: %,d円%n", s.yearTotal());
         System.out.printf("扶養ライン: %,d円%n", s.fuyouLimit());

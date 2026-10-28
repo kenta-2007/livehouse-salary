@@ -1,51 +1,39 @@
-import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.YearMonth;
 
 // 給料の「締め」の期間と、給料日（支給日）を計算する
-// ルール：締め日で区切り、締めた月の月末に支給。月末が土日・祝日なら、その前の平日
-public record PayPeriod(LocalDate start, LocalDate end, LocalDate payday) {
+// closingMonth は「何月締めの分か」（記録の一覧を開くときの目印にも使う）
+public record PayPeriod(YearMonth closingMonth, LocalDate start, LocalDate end, LocalDate payday) {
 
     // 働いた日が、どの期間（いつ支給される分）に入るかを求める
-    static PayPeriod of(LocalDate workDate, int closingDay) {
-        // その日を含む期間の「締めの月」を求める
+    static PayPeriod of(LocalDate workDate, Settings s) {
         YearMonth closingMonth = YearMonth.from(workDate);
-        if (closingDay != Settings.END_OF_MONTH && workDate.getDayOfMonth() > closingDay) {
+        if (s.closingDay() != Settings.END_OF_MONTH && workDate.getDayOfMonth() > s.closingDay()) {
             closingMonth = closingMonth.plusMonths(1);  // 締め日を過ぎていたら、翌月締めの分
         }
-        return ofClosingMonth(closingMonth, closingDay);
+        return ofClosingMonth(closingMonth, s);
     }
 
-    // 「〇月締め」の期間を求める
-    static PayPeriod ofClosingMonth(YearMonth closingMonth, int closingDay) {
-        LocalDate end = closingDate(closingMonth, closingDay);
-        LocalDate start = closingDate(closingMonth.minusMonths(1), closingDay).plusDays(1);
-        LocalDate payday = adjustToWeekday(closingMonth.atEndOfMonth());
-        return new PayPeriod(start, end, payday);
-    }
-
-    // 指定した月の締め日（末日締めなら、その月の最終日）
-    static LocalDate closingDate(YearMonth month, int closingDay) {
-        return closingDay == Settings.END_OF_MONTH ? month.atEndOfMonth() : month.atDay(closingDay);
-    }
-
-    // 土日・祝日なら、前の平日にずらす
-    static LocalDate adjustToWeekday(LocalDate date) {
-        while (isHoliday(date)) {
-            date = date.minusDays(1);
+    // 「〇月締め」の期間と給料日を求める
+    static PayPeriod ofClosingMonth(YearMonth closingMonth, Settings s) {
+        LocalDate end = dayOf(closingMonth, s.closingDay());
+        LocalDate start = dayOf(closingMonth.minusMonths(1), s.closingDay()).plusDays(1);
+        LocalDate payday = dayOf(closingMonth.plusMonths(s.paydayMonth()), s.paydayDay());
+        // 土日・祝日なら、前の平日にずらす
+        while (Holidays.isDayOff(payday)) {
+            payday = payday.minusDays(1);
         }
-        return date;
+        return new PayPeriod(closingMonth, start, end, payday);
     }
 
-    // 土日か、月末に来る可能性がある祝日か
-    // （月末にかかる祝日は、4/29（昭和の日）が日曜日のときの、4/30の振替休日だけ）
-    static boolean isHoliday(LocalDate date) {
-        DayOfWeek w = date.getDayOfWeek();
-        if (w == DayOfWeek.SATURDAY || w == DayOfWeek.SUNDAY) {
-            return true;
-        }
-        boolean showaDayOnSunday = LocalDate.of(date.getYear(), 4, 29).getDayOfWeek() == DayOfWeek.SUNDAY;
-        return date.getMonthValue() == 4 && date.getDayOfMonth() == 30 && showaDayOnSunday;
+    // 指定した月の「〇日」（末日なら、その月の最終日）
+    static LocalDate dayOf(YearMonth month, int day) {
+        return day == Settings.END_OF_MONTH ? month.atEndOfMonth() : month.atDay(day);
+    }
+
+    // その日が、この期間に入っているか
+    boolean contains(LocalDate date) {
+        return !date.isBefore(start) && !date.isAfter(end);
     }
 
     // 「9/21〜10/20」のような表示

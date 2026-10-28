@@ -73,7 +73,7 @@ public class WebApp {
         <h1>給料計算</h1>
         <form action="/" method="get">
           <label>日付（記録するとき）<input type="date" name="date" value="%s"></label>
-          <label>時給（円）<input type="number" name="wage" value="%s" required></label>
+          <p>時給 %s円</p>
           <label>開始時刻<input type="time" name="start" value="%s" required></label>
           <label>終了時刻<input type="time" name="end" value="%s" required></label>
           <label>休憩（分）<input type="number" name="break" value="%s" min="0"></label>
@@ -88,10 +88,9 @@ public class WebApp {
 
     // フォームに、前回入力した値（なければ初期値）を入れてHTMLを作る
     static String form(Map<String, String> params, String resultHtml) {
-        String wage = params.getOrDefault("wage", String.valueOf(Settings.load().wage()));
         return String.format(FORM,
                 escape(params.getOrDefault("date", LocalDate.now().toString())),
-                escape(wage),
+                String.format("%,d", Settings.load().wage()),
                 escape(params.getOrDefault("start", "")),
                 escape(params.getOrDefault("end", "")),
                 escape(params.getOrDefault("break", "0")),
@@ -228,9 +227,9 @@ public class WebApp {
     static void handleCalc(HttpExchange exchange) throws IOException {
         Map<String, String> params = parseQuery(exchange.getRequestURI().getRawQuery());
         String resultHtml = "";
-        if (params.containsKey("wage")) {
+        if (params.containsKey("start")) {
             try {
-                resultHtml = resultHtml(params, calc(params));
+                resultHtml = resultHtml(params, calc(params, Settings.load().wage()));
             } catch (RuntimeException e) {
                 resultHtml = "<p class=\"error\">入力内容を確認してください。</p>";
             }
@@ -250,8 +249,8 @@ public class WebApp {
         String resultHtml;
         try {
             LocalDate date = LocalDate.parse(params.get("date"));
-            Salary.PayResult r = calc(params);
-            int wage = Integer.parseInt(params.get("wage"));
+            int wage = Settings.load().wage();  // 時給は設定の値を使う
+            Salary.PayResult r = calc(params, wage);
             Salary.saveRecord(date, wage, params.get("start"), params.get("end"),
                     breakMinutes(params), breakStart(params), r.total());
             resultHtml = "<p class=\"result\">" + date + " の勤務を記録しました！</p>" + resultHtml(params, r);
@@ -289,23 +288,20 @@ public class WebApp {
 
         html.append("<div class=\"table-wrap\"><table><tr><th>給料日（働いた期間）</th>")
             .append("<th class=\"num\">日数</th><th class=\"num\">合計</th></tr>");
-        for (int m = 1; m <= 12; m++) {
-            if (s.monthDays()[m] > 0) {
-                PayPeriod p = s.periods()[m];
-                html.append("<tr><td><a class=\"nw\" href=\"/records?year=").append(year).append("&month=").append(m)
-                    .append("\">").append(p.paydayText()).append("</a><br><small class=\"nw\">")
-                    .append(p.rangeText()).append("</small></td><td class=\"num\">")
-                    .append(s.monthDays()[m]).append("日</td><td class=\"num\">")
-                    .append(String.format("%,d", s.monthTotal()[m])).append("円</td></tr>");
-            }
+        for (Salary.Row row : s.rows()) {
+            PayPeriod p = row.period();
+            html.append("<tr><td><a class=\"nw\" href=\"/records?closing=").append(p.closingMonth())
+                .append("\">").append(p.paydayText()).append("</a><br><small class=\"nw\">")
+                .append(p.rangeText()).append("</small></td><td class=\"num\">")
+                .append(row.days()).append("日</td><td class=\"num\">")
+                .append(String.format("%,d", row.total())).append("円</td></tr>");
         }
         html.append("</table></div>");
         html.append("<p>給料日をタップすると、その期間の記録の一覧が見られます。</p>");
 
         html.append("<div class=\"result\">").append(year).append("年の支給額の合計 <strong>")
             .append(String.format("%,d", s.yearTotal())).append("円</strong></div>");
-        html.append("<p>扶養ライン: ").append(String.format("%,d", s.fuyouLimit())).append("円")
-            .append("<br><small>扶養は、働いた日ではなく<strong>給料をもらった日</strong>で年を数えます。</small></p>");
+        html.append("<p>扶養ライン: ").append(String.format("%,d", s.fuyouLimit())).append("円</p>");
         if (s.remaining() < 0) {
             html.append("<p class=\"warn\">⚠ 扶養ラインを ")
                 .append(String.format("%,d", -s.remaining())).append("円 超えています！</p>");
@@ -325,17 +321,17 @@ public class WebApp {
 
     // 「次の給料日」と「今働いている期間」の金額を表示するHTML
     static String paydayInfoHtml() throws IOException {
-        int closingDay = Settings.load().closingDay();
+        Settings settings = Settings.load();
         LocalDate today = LocalDate.now();
-        PayPeriod current = PayPeriod.of(today, closingDay);
-        PayPeriod previous = PayPeriod.ofClosingMonth(YearMonth.from(current.end()).minusMonths(1), closingDay);
+        PayPeriod current = PayPeriod.of(today, settings);
+        PayPeriod previous = PayPeriod.ofClosingMonth(current.closingMonth().minusMonths(1), settings);
 
         long previousTotal = 0;
         long currentTotal = 0;
         for (Salary.Entry e : Salary.loadEntries()) {
-            if (!e.date().isBefore(previous.start()) && !e.date().isAfter(previous.end())) {
+            if (previous.contains(e.date())) {
                 previousTotal += e.total();
-            } else if (!e.date().isBefore(current.start()) && !e.date().isAfter(current.end())) {
+            } else if (current.contains(e.date())) {
                 currentTotal += e.total();
             }
         }
@@ -381,16 +377,13 @@ public class WebApp {
         html.append("<form action=\"/punch\" method=\"post\" class=\"punch\">");
         if (p == null) {
             html.append("<div class=\"status\">今は勤務していません</div>")
-                .append("<p>時給 ").append(String.format("%,d", Settings.load().wage()))
-                .append("円（<a href=\"/settings\">設定</a>で変更できます）</p>")
                 .append("<div class=\"buttons\"><button name=\"action\" value=\"in\">出勤</button></div>");
         } else if (p.onBreak()) {
             html.append("<div class=\"status\">休憩中（").append(p.breakStart()).append("〜）</div>")
                 .append("<div class=\"buttons\"><button name=\"action\" value=\"breakEnd\">休憩終了</button>")
                 .append("<button name=\"action\" value=\"out\">退勤</button></div>");
         } else {
-            html.append("<div class=\"status\">勤務中（").append(p.start()).append("〜、時給")
-                .append(p.wage()).append("円）");
+            html.append("<div class=\"status\">勤務中（").append(p.start()).append("〜）");
             if (p.breakTaken()) {
                 html.append("<br>休憩: ").append(p.breakStart()).append("〜").append(p.breakEnd());
             }
@@ -401,30 +394,27 @@ public class WebApp {
             html.append("<button name=\"action\" value=\"out\">退勤</button></div>");
         }
         html.append("</form>");
-        html.append(paydayInfoHtml());
         send(exchange, html.toString());
     }
 
     // ---- 記録の一覧・修正・削除 ----
 
-    // 「/records?year=2026&month=10」：その月の記録を一覧で表示する
+    // 「/records?closing=2026-10」：10月締めの期間の記録を一覧で表示する
     static void handleRecords(HttpExchange exchange) throws IOException {
         Map<String, String> params = parseQuery(exchange.getRequestURI().getRawQuery());
-        int year;
-        int month;
+        YearMonth closing;
         try {
-            year = Integer.parseInt(params.get("year"));
-            month = Integer.parseInt(params.get("month"));
+            closing = YearMonth.parse(params.get("closing"));
         } catch (RuntimeException e) {
             redirect(exchange, "/summary");
             return;
         }
-        send(exchange, recordsHtml(year, month, ""));
+        send(exchange, recordsHtml(closing, ""));
     }
 
-    // 「year年month月の給料日に支給される分」の記録一覧のHTMLを作る（message は上に出すお知らせ）
-    static String recordsHtml(int year, int month, String message) throws IOException {
-        PayPeriod period = PayPeriod.ofClosingMonth(YearMonth.of(year, month), Settings.load().closingDay());
+    // 「closing月締めの期間」の記録一覧のHTMLを作る（message は上に出すお知らせ）
+    static String recordsHtml(YearMonth closing, String message) throws IOException {
+        PayPeriod period = PayPeriod.ofClosingMonth(closing, Settings.load());
         StringBuilder html = new StringBuilder();
         html.append("<h1>").append(period.paydayText()).append("支給分の記録</h1>");
         html.append("<p>働いた期間：").append(period.start()).append("〜").append(period.end()).append("</p>");
@@ -436,7 +426,7 @@ public class WebApp {
         List<Salary.Entry> entries = Salary.loadEntries();
         entries.sort(Comparator.comparing(Salary.Entry::date).thenComparing(Salary.Entry::start));
         for (Salary.Entry e : entries) {
-            if (e.date().isBefore(period.start()) || e.date().isAfter(period.end())) {
+            if (!period.contains(e.date())) {
                 continue;  // この期間に働いた分だけを表示する
             }
             count++;
@@ -462,7 +452,7 @@ public class WebApp {
             html.append("<div class=\"result\">").append(count).append("日勤務・合計 <strong>")
                 .append(String.format("%,d", sum)).append("円</strong></div>");
         }
-        html.append("<p><a href=\"/summary?year=").append(year).append("\">← 集計に戻る</a></p>");
+        html.append("<p><a href=\"/summary?year=").append(period.payday().getYear()).append("\">← 集計に戻る</a></p>");
         return html.toString();
     }
 
@@ -478,9 +468,7 @@ public class WebApp {
             send(exchange, notFoundHtml());
             return;
         }
-        YearMonth pay = payMonth(e.date());
-        int year = pay.getYear();
-        int month = pay.getMonthValue();
+        YearMonth closing = closingMonth(e.date());
 
         if (!isPost) {
             // 確認画面（ここではまだ削除しない）
@@ -491,12 +479,12 @@ public class WebApp {
                     + "<form action=\"/delete\" method=\"post\" class=\"buttons\">"
                     + hidden(e)
                     + "<button type=\"submit\" class=\"danger\">削除する</button></form>"
-                    + "<p><a href=\"/records?year=" + year + "&month=" + month + "\">やめる</a></p>");
+                    + "<p><a href=\"/records?closing=" + closing + "\">やめる</a></p>");
             return;
         }
 
         if (Salary.replaceLine(e.index(), e.check(), null)) {
-            send(exchange, recordsHtml(year, month, "<p class=\"result\">記録を削除しました。</p>"));
+            send(exchange, recordsHtml(closing, "<p class=\"result\">記録を削除しました。</p>"));
         } else {
             send(exchange, notFoundHtml());
         }
@@ -509,14 +497,14 @@ public class WebApp {
         <form action="/edit" method="post">
           %s
           <label>日付<input type="date" name="date" value="%s" required></label>
-          <label>時給（円）<input type="number" name="wage" value="%s" required></label>
+          <p>時給 %s円（記録したときの時給）</p>
           <label>開始時刻<input type="time" name="start" value="%s" required></label>
           <label>終了時刻<input type="time" name="end" value="%s" required></label>
           <label>休憩（分）<input type="number" name="break" value="%s" min="0"></label>
           <label>休憩の開始時刻（休憩がある場合）<input type="time" name="breakStart" value="%s"></label>
           <div class="buttons"><button type="submit">保存する</button></div>
         </form>
-        <p><a href="/records?year=%s&month=%s">やめる</a></p>
+        <p><a href="/records?closing=%s">やめる</a></p>
         """;
 
     // 「/edit」：GETなら今の内容が入った修正フォーム、POSTなら計算し直して保存する
@@ -536,19 +524,19 @@ public class WebApp {
             // 休憩がない記録は、休憩の開始時刻の欄を空にしておく
             String breakStart = e.breakMinutes() > 0 ? e.breakStart() : "";
             send(exchange, String.format(EDIT_FORM, "", hidden(e),
-                    e.date(), e.wage(), escape(e.start()), escape(e.end()), e.breakMinutes(), escape(breakStart),
-                    payMonth(e.date()).getYear(), payMonth(e.date()).getMonthValue()));
+                    e.date(), String.format("%,d", e.wage()), escape(e.start()), escape(e.end()),
+                    e.breakMinutes(), escape(breakStart), closingMonth(e.date())));
             return;
         }
 
         try {
             LocalDate date = LocalDate.parse(params.get("date"));
-            int wage = Integer.parseInt(params.get("wage"));
-            Salary.PayResult r = calc(params);
+            int wage = e.wage();  // 時給は、記録したときのものをそのまま使う
+            Salary.PayResult r = calc(params, wage);
             String newLine = Salary.toLine(date, wage, params.get("start"), params.get("end"),
                     breakMinutes(params), breakStart(params), r.total());
             if (Salary.replaceLine(e.index(), e.check(), newLine)) {
-                send(exchange, recordsHtml(payMonth(date).getYear(), payMonth(date).getMonthValue(),
+                send(exchange, recordsHtml(closingMonth(date),
                         "<p class=\"result\">記録を修正しました（" + String.format("%,d", r.total()) + "円）。</p>"));
             } else {
                 send(exchange, notFoundHtml());
@@ -556,16 +544,16 @@ public class WebApp {
         } catch (RuntimeException ex) {
             // 入力がおかしいときは、入力した内容のままフォームを出し直す
             send(exchange, String.format(EDIT_FORM, "<p class=\"error\">入力内容を確認してください。</p>", hidden(e),
-                    escape(params.getOrDefault("date", "")), escape(params.getOrDefault("wage", "")),
+                    escape(params.getOrDefault("date", "")), String.format("%,d", e.wage()),
                     escape(params.getOrDefault("start", "")), escape(params.getOrDefault("end", "")),
                     escape(params.getOrDefault("break", "0")), escape(params.getOrDefault("breakStart", "")),
-                    payMonth(e.date()).getYear(), payMonth(e.date()).getMonthValue()));
+                    closingMonth(e.date())));
         }
     }
 
-    // その日に働いた分が、何年何月の給料日に支給されるか
-    static YearMonth payMonth(LocalDate workDate) {
-        return YearMonth.from(PayPeriod.of(workDate, Settings.load().closingDay()).payday());
+    // その日に働いた分が、何月締めの期間に入るか
+    static YearMonth closingMonth(LocalDate workDate) {
+        return PayPeriod.of(workDate, Settings.load()).closingMonth();
     }
 
     // フォームの line と check から、記録を探す（見つからなければ null）
@@ -601,7 +589,10 @@ public class WebApp {
             Map<String, String> params = parseQuery(body);
             try {
                 Settings input = new Settings(Integer.parseInt(params.get("wage")),
-                        Integer.parseInt(params.get("closingDay")), Long.parseLong(params.get("fuyouLimit")));
+                        Integer.parseInt(params.get("closingDay")),
+                        Integer.parseInt(params.get("paydayMonth")),
+                        Integer.parseInt(params.get("paydayDay")),
+                        Long.parseLong(params.get("fuyouLimit")));
                 String error = input.validate();
                 if (error == null) {
                     input.save();
@@ -615,30 +606,41 @@ public class WebApp {
             }
         }
 
-        StringBuilder days = new StringBuilder();
-        for (int d = 1; d <= 28; d++) {
-            days.append("<option value=\"").append(d).append("\"").append(d == s.closingDay() ? " selected" : "")
-                .append(">").append(d).append("日</option>");
-        }
-        days.append("<option value=\"").append(Settings.END_OF_MONTH).append("\"")
-            .append(s.closingDay() == Settings.END_OF_MONTH ? " selected" : "").append(">末日</option>");
+        // 例として、今日働いた分の給料日を表示する
+        PayPeriod example = PayPeriod.of(LocalDate.now(), s);
 
         send(exchange, "<h1>設定</h1>" + message
                 + "<form action=\"/settings\" method=\"post\">"
                 + "<label>時給（円）<input type=\"number\" name=\"wage\" value=\"" + s.wage() + "\" min=\"1\" required></label>"
                 + "<p><small>時給を変えても、これまでの記録の給料は変わりません。</small></p>"
-                + "<label>締め日<select name=\"closingDay\">" + days + "</select></label>"
-                + "<p><small>給料日は、締めた月の月末です（土日・祝日の場合は前の平日）。</small></p>"
+                + "<label>締め日<select name=\"closingDay\">" + dayOptions(s.closingDay()) + "</select></label>"
+                + "<label>給料日</label><div class=\"buttons\" style=\"margin-top:4px\">"
+                + "<select name=\"paydayMonth\">"
+                + "<option value=\"0\"" + (s.paydayMonth() == 0 ? " selected" : "") + ">当月</option>"
+                + "<option value=\"1\"" + (s.paydayMonth() == 1 ? " selected" : "") + ">翌月</option></select>"
+                + "<select name=\"paydayDay\">" + dayOptions(s.paydayDay()) + "</select></div>"
+                + "<p><small>土日・祝日の場合は、前の平日になります。<br>"
+                + "例：今日働いた分は " + example.rangeText() + " の期間で、" + example.paydayText() + " に支給</small></p>"
                 + "<label>扶養ライン（円）<input type=\"number\" name=\"fuyouLimit\" value=\"" + s.fuyouLimit()
                 + "\" min=\"0\" step=\"10000\" required></label>"
-                + "<p><small>金額は家庭の条件によって違うので、家族に確認してください。</small></p>"
                 + "<div class=\"buttons\"><button type=\"submit\">保存する</button></div>"
                 + "</form>");
     }
 
-    // フォームの値から給料を計算する
-    static Salary.PayResult calc(Map<String, String> params) {
-        int wage = Integer.parseInt(params.get("wage"));
+    // 「1日」〜「28日」と「末日」の選択肢（selected の日を選んだ状態にする）
+    static String dayOptions(int selected) {
+        StringBuilder html = new StringBuilder();
+        for (int d = 1; d <= 28; d++) {
+            html.append("<option value=\"").append(d).append("\"").append(d == selected ? " selected" : "")
+                .append(">").append(d).append("日</option>");
+        }
+        html.append("<option value=\"").append(Settings.END_OF_MONTH).append("\"")
+            .append(selected == Settings.END_OF_MONTH ? " selected" : "").append(">末日</option>");
+        return html.toString();
+    }
+
+    // フォームの値と時給から給料を計算する
+    static Salary.PayResult calc(Map<String, String> params, int wage) {
         return Salary.calculateDetail(wage, params.get("start"), params.get("end"),
                 breakMinutes(params), breakStart(params));
     }
