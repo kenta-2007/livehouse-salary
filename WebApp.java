@@ -493,7 +493,7 @@ public class WebApp {
         <form action="/edit" method="post">
           %s
           <label>日付<input type="date" name="date" value="%s" required></label>
-          <p>時給 %s円（記録したときの時給）</p>
+          <label>時給（円）<input type="number" name="wage" value="%s" min="1" max="100000" required></label>
           <label>開始時刻<input type="time" name="start" value="%s" required></label>
           <label>終了時刻<input type="time" name="end" value="%s" required></label>
           <label>休憩（分）<input type="number" name="break" value="%s" min="0"></label>
@@ -520,14 +520,18 @@ public class WebApp {
             // 休憩がない記録は、休憩の開始時刻の欄を空にしておく
             String breakStart = e.breakMinutes() > 0 ? e.breakStart() : "";
             send(exchange, String.format(EDIT_FORM, "", hidden(e),
-                    e.date(), String.format("%,d", e.wage()), escape(e.start()), escape(e.end()),
+                    e.date(), e.wage(), escape(e.start()), escape(e.end()),
                     e.breakMinutes(), escape(breakStart), closingMonth(e.date())));
             return;
         }
 
         try {
             LocalDate date = LocalDate.parse(params.get("date"));
-            int wage = e.wage();  // 時給は、記録したときのものをそのまま使う
+            // 修正画面でだけ、時給も直せる（設定の時給は変わらない）
+            int wage = Integer.parseInt(params.get("wage"));
+            if (wage < 1 || wage > 100_000) {
+                throw new IllegalArgumentException("時給の範囲外");
+            }
             Salary.PayResult r = calc(params, wage);
             String newLine = Salary.toLine(date, wage, params.get("start"), params.get("end"),
                     breakMinutes(params), breakStart(params), r.total());
@@ -540,7 +544,7 @@ public class WebApp {
         } catch (RuntimeException ex) {
             // 入力がおかしいときは、入力した内容のままフォームを出し直す
             send(exchange, String.format(EDIT_FORM, "<p class=\"error\">入力内容を確認してください。</p>", hidden(e),
-                    escape(params.getOrDefault("date", "")), String.format("%,d", e.wage()),
+                    escape(params.getOrDefault("date", "")), escape(params.getOrDefault("wage", "")),
                     escape(params.getOrDefault("start", "")), escape(params.getOrDefault("end", "")),
                     escape(params.getOrDefault("break", "0")), escape(params.getOrDefault("breakStart", "")),
                     closingMonth(e.date())));
