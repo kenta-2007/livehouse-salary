@@ -72,8 +72,7 @@ public class WebApp {
     static final String FORM = """
         <h1>給料計算</h1>
         <form action="/" method="get">
-          <label>日付（記録するとき）<input type="date" name="date" value="%s"></label>
-          <p>時給 %s円</p>
+          <label>勤務日<input type="date" name="date" value="%s"></label>
           <label>開始時刻<input type="time" name="start" value="%s" required></label>
           <label>終了時刻<input type="time" name="end" value="%s" required></label>
           <label>休憩（分）<input type="number" name="break" value="%s" min="0"></label>
@@ -90,7 +89,6 @@ public class WebApp {
     static String form(Map<String, String> params, String resultHtml) {
         return String.format(FORM,
                 escape(params.getOrDefault("date", LocalDate.now().toString())),
-                String.format("%,d", Settings.load().wage()),
                 escape(params.getOrDefault("start", "")),
                 escape(params.getOrDefault("end", "")),
                 escape(params.getOrDefault("break", "0")),
@@ -276,7 +274,7 @@ public class WebApp {
         html.append(paydayInfoHtml());
 
         // 年は、記録がある年から選ぶ
-        html.append("<h2>").append(year).append("年に支給される給料</h2>");
+        html.append("<h2>給料</h2>");
         html.append("<form action=\"/summary\" method=\"get\" class=\"buttons\">")
             .append("<select name=\"year\" onchange=\"this.form.submit()\">");
         for (int y : Salary.recordYears().descendingSet()) {
@@ -297,7 +295,6 @@ public class WebApp {
                 .append(String.format("%,d", row.total())).append("円</td></tr>");
         }
         html.append("</table></div>");
-        html.append("<p>給料日をタップすると、その期間の記録の一覧が見られます。</p>");
 
         html.append("<div class=\"result\">").append(year).append("年の支給額の合計 <strong>")
             .append(String.format("%,d", s.yearTotal())).append("円</strong></div>");
@@ -343,10 +340,9 @@ public class WebApp {
                 .append("<strong>").append(String.format("%,d", previousTotal)).append("円</strong>")
                 .append("<br><small>").append(previous.rangeText()).append("の勤務分</small><hr>");
         }
-        html.append("今の期間（").append(current.rangeText()).append("）<br>ここまで <strong>")
+        html.append("今の期間（").append(current.rangeText()).append("）<br><strong>")
             .append(String.format("%,d", currentTotal)).append("円</strong>")
-            .append("<br><small>").append(current.paydayText()).append("に支給予定</small>")
-            .append("<br><small>※給料日が土日・祝日の場合は前の平日になります</small></div>");
+            .append("<br><small>").append(current.paydayText()).append("に支給予定</small></div>");
         return html.toString();
     }
 
@@ -606,9 +602,6 @@ public class WebApp {
             }
         }
 
-        // 例として、今日働いた分の給料日を表示する
-        PayPeriod example = PayPeriod.of(LocalDate.now(), s);
-
         send(exchange, "<h1>設定</h1>" + message
                 + "<form action=\"/settings\" method=\"post\">"
                 + "<label>時給（円）<input type=\"number\" name=\"wage\" value=\"" + s.wage() + "\" min=\"1\" required></label>"
@@ -619,8 +612,7 @@ public class WebApp {
                 + "<option value=\"0\"" + (s.paydayMonth() == 0 ? " selected" : "") + ">当月</option>"
                 + "<option value=\"1\"" + (s.paydayMonth() == 1 ? " selected" : "") + ">翌月</option></select>"
                 + "<select name=\"paydayDay\">" + dayOptions(s.paydayDay()) + "</select></div>"
-                + "<p><small>土日・祝日の場合は、前の平日になります。<br>"
-                + "例：今日働いた分は " + example.rangeText() + " の期間で、" + example.paydayText() + " に支給</small></p>"
+                + "<p><small>土日・祝日の場合は、前の平日になります。</small></p>"
                 + "<label>扶養ライン（円）<input type=\"number\" name=\"fuyouLimit\" value=\"" + s.fuyouLimit()
                 + "\" min=\"0\" step=\"10000\" required></label>"
                 + "<div class=\"buttons\"><button type=\"submit\">保存する</button></div>"
